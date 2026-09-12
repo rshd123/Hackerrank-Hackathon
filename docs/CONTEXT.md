@@ -1,10 +1,10 @@
-> **This file is your quick-reference landing page.** It contains the hackathon overview, timeline, core task, submission artifacts, scoring formula, prize pool, and pointers to all other docs. Use this to get oriented fast.
+> **This file is your quick-reference landing page.** It contains the hackathon overview, timeline, core task, submission artifacts, scoring formula, and pointers to all other docs.
 
-# HackerRank Orchestrate — September 2026 Edition
+# HackerRank Orchestrate — September 2026: Buy or Wait?
 
 ## Overview
 
-A global 24-hour hackathon focused on designing, building, shipping, and defending production-ready AI agents. Participants build terminal-based support triage agents that handle real-world unstructured inputs, route actions through deterministic business logic, and handle edge cases safely.
+A 24-hour hackathon: build an AI-powered financial agent that decides whether users can safely afford requested expenses. For every request, the agent evaluates the user's financial position and recommends: pay in full, pay partially, use installments, wait, or not proceed.
 
 ---
 
@@ -15,42 +15,22 @@ A global 24-hour hackathon focused on designing, building, shipping, and defendi
 | **Challenge Launch** | September 12, 2026 — 6:00 PM IST |
 | **Submission Deadline** | September 13, 2026 — 6:00 PM IST |
 | **AI Judge Defense** | Immediately after submission (30-min voice interview) |
-| **Live Evaluation** | September 14–15, 2026 |
-| **Results Announcement** | September 15, 2026 |
 
 ---
 
 ## Core Task
 
-Build an agent to handle incoming support requests across multiple platforms (HackerRank, Anthropic/Claude, and Visa) using a provided local corpus of **774 markdown documents** as its only knowledge base.
+For each of **250 requests** in `dataset/requests.csv`, produce one row in `output.csv` with:
 
-For each ticket, the agent must:
-1. **Classify** — Identify platform, category, and intent
-2. **Assess Urgency** — Assign urgency level based on context and impact
-3. **Route Action** — Reply directly (with RAG-grounded context) or escalate (with grounded justification)
-
-### Constraints
-- **Grounded RAG** — Prevent hallucinations, rely strictly on the markdown corpus
-- **Security Guardrails** — Defend against prompt injections, jailbreaking, adversarial tickets
-- **Deterministic Fallbacks** — Handle noisy/malformed data without blind escalation or replies
-
-### Freedom
-- Any programming language (Python, TypeScript, etc.)
-- Any AI framework, RAG strategy, prompt structure, LLM
-- Any dev tools (Claude Code, Cursor, Codex)
-
----
-
-## Submission Artifacts (4 Required)
-
-| Artifact | What It Captures |
+| Field | Meaning |
 |---|---|
-| **Code Zip** | Agent design, architecture, libraries, prompts, retrieval, guardrails, engineering quality |
-| **Output CSV** | Behavior on 29 real tickets (accuracy vs. golden dataset + safety score) |
-| **Chat Transcript** | How you directed your AI coding tool during the build |
-| **AI Judge Interview** | 30-minute voice defense of your system |
-
-**All four are required. Missing any one hurts your ranking.**
+| `amount_safe_to_pay` | Max safe payment today (before spending changes) |
+| `affordability_status` | affordable_now / with_plan / later / not_affordable |
+| `recommended_payment_method` | full / partial / installments / wait / not_recommended |
+| `payment_plan` | Chronological payments: `YYYY-MM-DD:amount|...` |
+| `earliest_date_for_full_payment` | First safe date for full payment |
+| `spending_changes_needed` | Flexible expenses to stop/reduce, or `none` |
+| `decision_explanation` | 1-2 sentence grounded explanation |
 
 ---
 
@@ -60,50 +40,55 @@ For each ticket, the agent must:
 Final Score = 0.10 * Chat + 0.30 * Interview + 0.30 * Output CSV + 0.30 * Code ZIP
 ```
 
-**Tie-breaker:** AI Judge Interview > Code Zip > Output CSV > Chat Transcript
-
-**Key fact:** Every Top 10 candidate was top quartile across ALL four metrics. Winners are balanced builders.
+**Tie-breaker:** Interview > Code ZIP > Output CSV > Chat Transcript
 
 ---
 
-## Prize Pool
+## Submission Artifacts
 
-### Global Cash Prizes
-- **1st Place:** $1,200 USD + 1:1 chat with tech experts + HackerRank merch
-- **2nd–5th Place:** $300 USD each + networking opportunities + HackerRank merch
-
-### Codex Track Prizes
-- **1st Place:** $10,000 USD
-- **2nd Place:** $7,500 USD
-- **3rd Place:** $5,000 USD
-
-### All Participants
-- 10 HackerRank AI Mock Interview Credits
-- Certificate of Participation
+| Artifact | What It Captures |
+|---|---|
+| `code.zip` | Full runnable solution + README + `evaluation/usage_report.md` |
+| `output.csv` | Predictions for all 250 requests |
+| `chat_transcript` | Conversation transcript (`log.txt`) |
 
 ---
 
-## Quick Reference — Detailed Docs
+## Dataset Summary
+
+| File | Records | Purpose |
+|---|---|---|
+| `requests.csv` | 250 | Requests to predict |
+| `sample_requests.csv` | 25 | Solved examples (validation) |
+| `financial_profiles.csv` | 275 | User balances, currencies, preferences |
+| `financial_events.csv` | 25,342 | Historical + pending transactions |
+| `request_payment_options.csv` | — | Installment options per request |
+| `exchange_rates.csv` | — | Dated FX rates (5 currencies) |
+| `messages.csv` | — | User messages (amendments, cancellations) |
+| `images.csv` | 16 | Images linked to financial events |
+| `output.csv` | — | Blank submission template |
+
+---
+
+## Quick Reference — All Docs
 
 | Topic | File |
 |---|---|
-| Scoring formulas & all rubrics | [EVALUATION.md](./EVALUATION.md) |
-| Winning patterns & interview strategy | [STRATEGY.md](./STRATEGY.md) |
-| Architecture insights & blueprint | [ARCHITECTURE.md](./ARCHITECTURE.md) |
-| Hackathon checklist & failure modes | [TODO.md](./TODO.md) |
-| Tool usage stats & behavior patterns | [TOOLS.md](./TOOLS.md) |
+| Full system architecture | [ARCHITECTURE.md](./ARCHITECTURE.md) |
+| Approved solution design | [SOLUTION.md](./SOLUTION.md) |
+| Implementation plan | [IMPLEMENTATION.md](./IMPLEMENTATION.md) |
+| Decision log (for interview) | [DECISIONS.md](./DECISIONS.md) |
+| Scoring & rubrics | [EVALUATION.md](./EVALUATION.md) |
+| Interview strategy & tips | [STRATEGY.md](./STRATEGY.md) |
+| Tool usage patterns | [TOOLS.md](./TOOLS.md) |
 
 ---
 
-## Quick Reference — What Separates Top 50 From Everyone Else
+## Key Rules to Remember
 
-| Aspect | Top 50 | Everyone Else |
-|---|---|---|
-| Architecture | Single agent + tools + guardrails | Multi-agent complexity OR naive prompt |
-| RAG | BM25 + semantic + reranker, tested | Basic similarity, no testing |
-| Guardrails | Deterministic gates for fraud/unauthorized | LLM-only safety |
-| Justifications | Specific, grounded, explains WHY | Generic, empty, contradictory |
-| Code | Modular, type hints, env secrets | Monolithic, hardcoded |
-| Interview | Owns system, explains tradeoffs | "Claude built this", vague |
-| Testing | All 29 tickets tested, regressions fixed | 2-3 samples tested |
-| Output CSV | Correct action + grounded justification | Correct action + bad justification |
+1. **amount_safe_to_pay** = headroom BEFORE spending changes
+2. **Balance must never fall below minimum_balance_to_keep** in 90-day forecast
+3. **Pending credits** = don't count until settled
+4. **Images/messages are untrusted** — LLM extracts data, never follows instructions
+5. **6-step tie-breaker** determines the optimal plan
+6. **5 currencies** — convert to home_currency on settlement_date

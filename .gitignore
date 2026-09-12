@@ -29,16 +29,8 @@ env/
 .DS_Store
 Thumbs.db
 
-# Output (don't commit generated files)
-output/*.csv
-output/*.json
-
-# Test results (regression tracking)
-tests/results/
-
-# Logs
-*.log
-logs/
+# Chat transcript (upload manually, don't commit)
+log.txt
 
 # API keys
 *.key

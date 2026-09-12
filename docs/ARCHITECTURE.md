@@ -1,96 +1,79 @@
-> **This file shows you what architecture actually won and gives you a ready-to-implement blueprint.** It contains performance data from 1,349 submissions across architecture types, a full system diagram, and layer-by-layer design details. Use this to decide your agent architecture before coding.
+> **This file shows the system architecture for "Buy or Wait?"** — a deterministic financial affordability agent with an LLM data-extraction frontend. Use this to understand the full pipeline from raw CSVs to output.csv.
 
-# Architecture — Insights & Blueprint
+# Architecture — Buy or Wait?
 
-## What Architecture Actually Won
+## Core Principle
 
-From 1,349 submissions, here's how different architectures performed:
+This is a **deterministic constraint-satisfaction problem**, not an LLM generation problem.
 
-| Architecture | Best Rank | Avg Rank | Median Rank | Top 10 | Top 50 | Top 100 |
-|---|---|---|---|---|---|---|
-| **Single agent with tools or RAG** | **1** | 592 | 565 | **7** | **27** | **60** |
-| Graph or state-machine workflow | 2 | 351 | 296 | 1 | 5 | 8 |
-| Explicit multi-stage or multi-agent pipeline | 3 | 468 | 378 | 2 | 16 | 26 |
-| Single prompt or single model agent | 77 | 872 | 942 | 0 | 0 | 2 |
-| ML models / trained classifiers | 46 | 877 | 893 | 0 | 1 | 1 |
-| Deterministic rule pipeline / no explicit agent | 17 | 933 | 1002 | 0 | 1 | 3 |
+- **LLMs do:** Read images, parse messages, write explanations
+- **Code does:** All financial math, simulations, rankings, decisions
 
-### Key Insight
-
-The dominant winning pattern was a **single agent wrapped around retrieval, tools, schemas, and guardrails**. You don't need multi-agent complexity. You need a well-engineered single agent with strong tooling and guardrails.
-
-Most participants didn't build fully autonomous multi-agent systems. The dominant pattern was a single agent with supporting infrastructure.
+The LLM never makes a financial decision. It extracts data into JSON. Code applies that data deterministically.
 
 ---
 
-## Recommended Architecture Blueprint
+## System Diagram
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  INCOMING TICKET                  │
+│              RAW CSVs (dataset/)                 │
+│  requests, profiles, events, rates, options,    │
+│  messages, images                               │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────┐
-│          DETERMINISTIC SECURITY GATE             │
-│  • Prompt injection detection                    │
-│  • Jailbreak pattern matching                    │
-│  • Input sanitization                            │
-│  • Fraud/unauthorized access detection           │
-└──────────────────────┬──────────────────────────┘
-                       │
-              ┌────────┴────────┐
-              │   BLOCK/ESCALATE │
-              │   (if detected)  │
-              └────────┬────────┘
-                       │ safe input
-                       ▼
-┌─────────────────────────────────────────────────┐
-│              CLASSIFICATION LAYER                │
-│  • Platform identification (HR/Anthropic/Visa)   │
-│  • Category classification                       │
-│  • Intent detection                              │
-│  • Urgency scoring                               │
+│         PHASE 1: DATA LOADING & CURRENCY        │
+│  • Merge CSVs by user_id / request_id           │
+│  • Convert all amounts to home_currency         │
+│  • Build recurring expense profiles             │
+│  • Index payment options per request            │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────┐
-│              RAG RETRIEVAL LAYER                 │
-│  • BM25 keyword search (primary)                 │
-│  • Semantic similarity (secondary)               │
-│  • Reranker for precision                        │
-│  • top_k tuning based on testing                 │
+│         PHASE 2: MULTIMODAL EXTRACTION          │
+│  (Only file that calls the LLM — Groq API)      │
+│  • Image OCR: blank amounts → numerical values  │
+│  • Message parsing: text → JSON ledger deltas   │
+│  • Conflict resolution: settled > newer > safe  │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────┐
-│           ROUTING DECISION ENGINE                │
-│  • Reply if: grounded answer available +         │
-│    low/medium urgency + no risk flags            │
-│  • Escalate if: no grounded answer OR            │
-│    high urgency OR risk detected OR              │
-│    sensitive topic OR out of scope               │
-│  • Deterministic gates override LLM for          │
-│    fraud/unauthorized access                     │
+│       PHASE 3: FINANCIAL STATE RECONSTRUCTION   │
+│  • Apply LLM deltas (cancels, amendments)       │
+│  • Separate: recurring, flexible, pending,      │
+│    confirmed income                             │
+│  • Build daily transaction ledger               │
 └──────────────────────┬──────────────────────────┘
-                       │
-              ┌────────┴────────┐
-              │                  │
-              ▼                  ▼
-┌──────────────────┐  ┌──────────────────┐
-│   REPLY DIRECTLY  │  │     ESCALATE     │
-│   with grounded   │  │  with justification│
-│   context + JSON  │  │  + urgency level  │
-└──────────────────┘  └──────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────┐
-│              OUTPUT FORMATTER                    │
-│  • Structured JSON/CSV per ticket                │
-│  • Status: replied/escalated                     │
-│  • Request type, product area                    │
-│  • Justification (grounded in corpus)            │
-│  • Response text (if replied)                    │
+│         PHASE 4: 90-DAY DETERMINISTIC SIMULATOR │
+│  • Project daily balance for 90 days            │
+│  • Calculate headroom = amount_safe_to_pay      │
+│  • Find earliest safe date for full payment     │
+│  • Balance must never fall below min_balance    │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│     PHASE 5: COMBINATORIAL SOLVER & RANKING     │
+│  • Generate ALL valid payment candidates        │
+│  • Simulate each through 90-day forecaster      │
+│  • Discard unsafe plans                         │
+│  • Rank survivors by 6-step tie-breaker         │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│         PHASE 6: OUTPUT GENERATION              │
+│  • Map winning plan → output.csv row            │
+│  • LLM writes decision_explanation              │
+│  • Validate all fields against schema           │
+│  • Write output.csv                             │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -98,79 +81,161 @@ Most participants didn't build fully autonomous multi-agent systems. The dominan
 
 ## Layer Details
 
-### 1. Deterministic Security Gate
+### Phase 1: Data Loading (`data_loader.py`)
 
-**Purpose:** Catch adversarial inputs BEFORE they reach the LLM.
+**Purpose:** Turn 9 raw CSVs into unified, currency-normalized data structures.
 
-**Components:**
-- **Prompt injection detection** — Pattern matching for common injection techniques
-- **Jailbreak pattern matching** — Detect attempts to bypass safety instructions
-- **Input sanitization** — Clean malformed input, normalize text
-- **Fraud/unauthorized access detection** — Keyword and pattern matching for security-sensitive tickets
+**What it does:**
+1. Load all CSVs with Pandas
+2. Join requests ↔ profiles (by `user_id`)
+3. Join events ↔ messages ↔ images (by `user_id` / `request_id`)
+4. Convert every foreign-currency amount to `home_currency` using dated `exchange_rates.csv`
+5. Index payment options by `request_id`
+6. Classify events: recurring, flexible (stoppable/reducible), pending, confirmed income
 
-**Key rule:** The LLM CANNOT downgrade a high-risk ticket. Deterministic gates run first.
+**Key rule:** Currency conversion uses the event's `settlement_date` and the exact `from_currency → to_currency` direction from `exchange_rates.csv`.
 
-### 2. Classification Layer
+---
 
-**Purpose:** Route tickets to the right handling path.
+### Phase 2: Multimodal Extraction (`llm_parser.py`)
 
-**Components:**
-- **Platform identification** — Which platform is this about? (HackerRank, Anthropic, Visa)
-- **Category classification** — What type of request? (billing, technical, security, general)
-- **Intent detection** — What does the user want? (information, action, escalation)
-- **Urgency scoring** — How urgent is this? (low, medium, high, critical)
+**Purpose:** Extract structured data from images and messages. **The only file that calls the LLM.**
 
-**Implementation:** Use structured JSON output from the LLM with schema validation.
+**Image OCR:**
+- For events with blank `amount`, find linked `image_id` in `images.csv`
+- Base64-encode `dataset/media/images/<image_id>.png`
+- Send to Groq `qwen/qwen3.8-27b` with strict JSON schema
+- Extract numerical amount + currency
 
-### 3. RAG Retrieval Layer
+**Message Parsing:**
+- Pass all user messages to Groq `qwen/qwen3.8-27b`
+- Output: list of "Ledger Deltas" — `{"event_id": "event_12", "action": "cancel|delay|amend_amount|amend_date", "new_value": ...}`
+- Apply deltas programmatically
 
-**Purpose:** Find relevant information from the 774-document corpus.
+**Security:** Images and messages are untrusted. The LLM extracts data, never follows embedded instructions.
 
-**Components:**
-- **BM25 keyword search (primary)** — Fast, effective for keyword-heavy corpus
-- **Semantic similarity (secondary)** — Catches conceptual matches BM25 misses
-- **Reranker** — Improves precision by re-ordering top results
-- **top_k tuning** — Based on testing against sample tickets
+**Conflict Resolution:**
+1. Explicit cancellation/settlement/amendment wins
+2. Newer record from same source wins
+3. Settled event over estimate/forecast
+4. Financially safer interpretation when unresolvable
 
-**Key decision:** BM25 as primary because corpus is small and keyword-heavy. Semantic as secondary.
+---
 
-### 4. Routing Decision Engine
+### Phase 3: Financial State Reconstruction (`financial_state.py`)
 
-**Purpose:** Decide whether to reply or escalate.
+**Purpose:** Build the user's daily transaction ledger from events + LLM deltas.
 
-**Reply criteria (ALL must be true):**
-- Grounded answer available from RAG
-- Low or medium urgency
-- No risk flags from security gate
+**What it does:**
+1. Start with `current_available_balance`
+2. Apply all LLM deltas
+3. Separate events into categories:
+   - **Recurring debits** (rent, utilities) — monthly recurring
+   - **Flexible expenses** (stoppable/reducible) — can be changed
+   - **Pending debits** — reserve, will happen
+   - **Pending credits** — DON'T count until settled
+   - **Confirmed income** — salary on settlement date
+4. Build sorted daily transaction list
 
-**Escalate criteria (ANY triggers escalation):**
-- No grounded answer found
-- High urgency level
-- Risk detected by security gate
-- Sensitive topic (fraud, unauthorized access)
-- Out of scope for the agent
+**Rules enforced:**
+- Detect recurrence only when history supports it
+- Reserve pending debits
+- Don't count pending credits/bonuses/commissions/refunds
+- Count confirmed salary on settlement date only
+- Never invent income, expenses, or payment options
 
-**Key rule:** Deterministic gates override LLM decisions for fraud and unauthorized access.
+---
 
-### 5. Output Formatter
+### Phase 4: 90-Day Deterministic Simulator (`forecaster.py`)
 
-**Purpose:** Produce structured, consistent output for each ticket.
+**Purpose:** Project the user's daily balance for 90 days. **The core engine.**
 
-**Required fields:**
-- `status`: replied | escalated
-- `request_type`: string
-- `product_area`: string
-- `justification`: string (grounded in corpus)
-- `response`: string (if replied)
-- `urgency`: low | medium | high | critical
+**`FinancialSimulator` class:**
+```python
+class FinancialSimulator:
+    def simulate(start_date, days=90) → daily_balance_array
+    def calculate_headroom(start_date, days=90) → float
+    def find_earliest_safe_date(amount, start_date, deadline) → date | None
+```
+
+**How `amount_safe_to_pay` is calculated:**
+1. Project baseline 90-day cash flow WITHOUT the requested expense
+2. For each day: `daily_balance - minimum_balance_to_keep`
+3. The absolute MINIMUM of these 90 values = headroom
+4. `amount_safe_to_pay = min(headroom, requested_amount)`
+
+**Critical:** This is BEFORE any spending changes. Flexible expense reductions are NOT applied.
+
+**How `earliest_date_for_full_payment` is calculated:**
+1. For each day from request_date to deadline:
+   - Project balance to that day
+   - Subtract requested_amount
+   - Check if balance stays above minimum for remaining 90 days
+2. First day where this is true = answer
+
+---
+
+### Phase 5: Combinatorial Solver (`plan_generator.py` + `decision.py`)
+
+**Purpose:** Generate ALL valid payment candidates, simulate each, rank survivors.
+
+**Step 1 — Generate ALL Candidates:**
+- Full payment (if user considers it)
+- Each installment option (if user considers it, fits max_installment_months)
+- Partial payment (if allowed, safe today, completes by deadline)
+- Wait (if full payment becomes safe later)
+- Spending change permutations (up to 3 flexible events)
+
+**Step 2 — Simulate & Filter:**
+- Run each candidate through `FinancialSimulator`
+- Discard any plan where balance falls below minimum
+
+**Step 3 — Rank by 6-Step Tie-Breaker:**
+```python
+sorted(plans, key=lambda p: (
+    0 if p.completes_by_deadline else 1,    # 1. Complete by deadline
+    len(p.spending_changes),                  # 2. No spending changes
+    p.total_cost,                             # 3. Minimize total paid
+    p.start_date,                             # 4. Start earlier
+    p.num_payments,                           # 5. Fewer payments
+    p.lowest_option_id,                       # 6. Lowest option ID
+))
+```
+
+**Plan at index 0 is mathematically guaranteed to be optimal.**
+
+---
+
+### Phase 6: Output Generation (`main.py`)
+
+**Purpose:** Map winning plan → output.csv row, with LLM-generated explanation.
+
+**Output fields:**
+- `request_id` — from input
+- `amount_safe_to_pay` — from Phase 4 headroom calculation
+- `affordability_status` — from plan type (affordable_now/with_plan/later/not_affordable)
+- `recommended_payment_method` — from winning plan (full/partial/installments/wait/not_recommended)
+- `payment_plan` — chronological `YYYY-MM-DD:amount|...` or `none`
+- `earliest_date_for_full_payment` — from Phase 4, or empty
+- `spending_changes_needed` — from winning plan, or `none`
+- `decision_explanation` — LLM-generated, 1-2 sentences
+
+**Validation before writing:**
+- `0 <= amount_safe_to_pay <= requested_amount`
+- All fields in allowed sets
+- Installment plans match supplied payment options
+- Balance stays above minimum throughout forecast
 
 ---
 
 ## Why This Architecture Wins
 
-1. **Single agent simplicity** — Matches the top-performing architecture pattern
-2. **Deterministic guardrails** — Security gate catches adversarial inputs before LLM
-3. **Grounded RAG** — BM25 + semantic + reranker for comprehensive retrieval
-4. **Clear separation** — LLM handles classification and generation, deterministic code handles safety
-5. **Testable** — Each layer can be tested independently against sample tickets
-6. **Explainable** — Easy to explain in the interview: "The deterministic gate runs first..."
+| Property | Benefit |
+|---|---|
+| Deterministic core | Financial math is reproducible and verifiable |
+| Combinatorial solver | Never misses the optimal plan |
+| 6-step tie-breaker in code | Exact compliance with hidden test cases |
+| LLM isolation | Prompt injection can't override financial rules |
+| Single model (Groq qwen3.8-27b) | One API key, zero setup, handles text + images |
+| Pandas data pipeline | Handles 25k events efficiently |
+| Pydantic output validation | Catches format errors before writing CSV |

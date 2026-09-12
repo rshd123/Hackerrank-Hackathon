@@ -1,155 +1,182 @@
-> **This file is your operational checklist for the entire hackathon.** It covers project setup tasks, hour-by-hour build phases, post-submission prep, and a full list of common failure modes to avoid. Use this as your running task list from setup through submission.
+> **This is the execution checklist.** Follow this phase by phase. Each task has a checkbox, clear deliverable, and acceptance criteria. Check off as you complete.
 
-# Checklist — Before, During & After the Hackathon
+# TODO — Build Checklist
 
-## Before the Challenge Launches
+## Before You Start
 
-### Project Setup
-- [ ] Create project folder structure:
-  ```
-  hackathon/
-  ├── src/
-  │   ├── agent/
-  │   ├── rag/
-  │   ├── guardrails/
-  │   ├── classification/
-  │   └── output/
-  ├── tests/
-  ├── corpus/
-  ├── config/
-  ├── main.py
-  ├── requirements.txt
-  └── README.md
-  ```
-- [ ] Set up Python environment (venv/conda)
-- [ ] Configure type hints throughout
-- [ ] Set up env-based secrets management (no hardcoded API keys)
-- [ ] Create config files for model parameters, thresholds, paths
-- [ ] Set up basic logging infrastructure
-
-### Tool Preparation
-- [ ] Pre-configure Claude Code / your chosen tool with project context
-- [ ] Test that your tool works with the project structure
-- [ ] Set up a clean chat session for the hackathon (clean transcript = better score)
-
-### Research & Practice
-- [ ] Study the previous Orchestrate problem format (29 tickets, 774 docs)
-- [ ] Research BM25 retrieval for small corpus
-- [ ] Research semantic retrieval approaches
-- [ ] Research prompt injection detection patterns
-- [ ] Practice explaining technical decisions concisely (for interview)
-- [ ] Prepare a 3-minute pitch of your expected system
-
-### Submission Prep
-- [ ] Know exactly what 4 artifacts to submit
-- [ ] Prepare a submission checklist
-- [ ] Test that your output format matches requirements
+- [ ] Read `problem_statement.md` in full
+- [ ] Read `docs/SOLUTION.md` (architecture)
+- [ ] Read `docs/IMPLEMENTATION.md` (design specs)
+- [ ] Read `docs/DECISIONS.md` (decisions to defend in interview)
+- [ ] Verify `.env` has `GROQ_API_KEY`
+- [ ] Verify `pip install -r requirements.txt` works
+- [ ] Verify all dataset files exist and are readable
 
 ---
 
-## During the 24 Hours
+## Phase 1: Data Loader (`code/data_loader.py`)
 
-### Phase 1: Understanding (Hours 1-2)
-- [ ] Read the problem statement carefully
-- [ ] Inspect the dataset — how many tickets, what categories, what platforms
-- [ ] Read through the 774-document corpus structure
-- [ ] Identify the 3 platforms and their support categories
-- [ ] Note any obvious adversarial tickets in the sample
-- [ ] Plan your architecture (write it down before coding)
+**Goal:** Load all CSVs, join them, convert currencies.
 
-### Phase 2: Core Build (Hours 3-8)
-- [ ] Build the deterministic security gate first
-- [ ] Build classification layer with structured JSON output
-- [ ] Set up RAG pipeline (BM25 primary, semantic secondary)
-- [ ] Build routing decision engine (reply vs. escalate logic)
-- [ ] Build output formatter with required fields
-- [ ] Connect all layers into the agent loop
+- [ ] Create `code/data_loader.py`
+- [ ] Define data structures: `Request`, `UserProfile`, `FinancialEvent`, `PaymentOption`
+- [ ] Implement `DataLoader.__init__(dataset_path)`
+- [ ] Implement `load_requests()` → 250 rows
+- [ ] Implement `load_profiles()` → dict by user_id
+- [ ] Implement `load_events(user_id)` → list of FinancialEvent
+- [ ] Implement `load_payment_options(request_id)` → list of PaymentOption
+- [ ] Implement `load_exchange_rates()` → index by (date, from, to)
+- [ ] Implement `convert_currency(amount, from_cur, to_cur, date)` → float
+- [ ] Implement `load_messages(request_id)` → list of Message
+- [ ] Implement `load_images(request_id)` → list of Image (paths)
+- [ ] Test: load all data, verify row counts match expected
+- [ ] Test: currency conversion matches manual calculation
 
-### Phase 3: Testing & Guardrails (Hours 9-14)
-- [ ] Test against ALL 29 tickets
-- [ ] Categorize failures by type (classification, retrieval, routing, justification)
-- [ ] Fix regressions — when you fix one ticket, check you don't break others
-- [ ] Add guardrails for adversarial inputs
-- [ ] Test prompt injection detection
-- [ ] Test fraud/unauthorized access escalation
-- [ ] Verify justifications are specific and grounded in corpus
-
-### Phase 4: Polish & Edge Cases (Hours 15-20)
-- [ ] Polish output CSV format
-- [ ] Handle edge cases: empty tickets, multilingual, out-of-scope
-- [ ] Test adversarial tickets specifically
-- [ ] Verify justification consistency (action matches justification)
-- [ ] Check for hallucinated policies (LLM making up rules)
-- [ ] Run full test suite again to confirm no regressions
-
-### Phase 5: Final (Hours 21-24)
-- [ ] Final full test run on all 29 tickets
-- [ ] Review output CSV for consistency
-- [ ] Review code for modularity and cleanliness
-- [ ] Update README with actual implementation details
-- [ ] Submit all 4 artifacts
-- [ ] Prepare for interview — review your architecture decisions
+**Done when:** `python -c "from code.data_loader import DataLoader; d = DataLoader('dataset/'); print(len(d.load_requests()), 'requests loaded')"` prints 250.
 
 ---
 
-## After Submission
+## Phase 2: Financial State (`code/financial_state.py`)
 
-### Interview Preparation
-- [ ] Prepare a 2-3 minute pitch of your system
-- [ ] Know your architecture decisions and WHY you made them
-- [ ] Be ready to explain specific test failures and how you fixed them
-- [ ] Prepare examples of regressions you caught and reverted
-- [ ] Be honest about limitations and what you'd improve
-- [ ] Reference concrete numbers: accuracy per category, retrieval precision
-- [ ] Practice explaining tradeoffs (BM25 vs semantic, single vs multi-agent)
+**Goal:** Reconstruct user's daily ledger from events.
 
-### During the Interview
-- [ ] Answer the specific question asked
-- [ ] Use concrete examples from your testing
-- [ ] Explain tradeoffs, not just decisions
-- [ ] Reference specific ticket numbers or categories
-- [ ] If you don't know, say so honestly
-- [ ] Connect safety mechanisms to actual ticket behavior
-- [ ] Don't narrate what the AI tool did — own your decisions
+- [ ] Create `code/financial_state.py`
+- [ ] Define `LedgerDelta` dataclass (event_id, action, new_value)
+- [ ] Define `DailyLedger` dataclass (list of daily balances)
+- [ ] Implement `FinancialState.__init__(profile, events)`
+- [ ] Implement `apply_deltas(deltas)` → modifies events in-place
+- [ ] Implement `resolve_conflicts(events)` → filtered events
+- [ ] Implement `classify_events()` → recurring, flexible, pending, confirmed
+- [ ] Implement `build_daily_ledger(start_date, days=90)` → DailyLedger
+- [ ] Implement `get_recurring_expenses()` → list
+- [ ] Implement `get_flexible_events()` → list
+- [ ] Test: pending credits excluded from ledger
+- [ ] Test: recurring events appear monthly
+- [ ] Test: balance starts at current_balance
+
+**Done when:** Build a ledger for any user and verify daily balances are correct by manual inspection.
 
 ---
 
-## Common Failure Modes to Avoid
+## Phase 3: 90-Day Simulator (`code/forecaster.py`)
 
-### Critical Failures
+**Goal:** Project daily balance, calculate headroom, find safe dates.
 
-| Failure | Why It's Bad | How to Avoid |
-|---|---|---|
-| **Escalating everything** | Invalid — shows no intelligence | Reply when you have grounded answer + low/medium urgency |
-| **Replying to everything** | Invalid — no safety awareness | Escalate when no answer, high urgency, or risk detected |
-| **Empty/generic justifications** | Capped at ~70 even with correct action | Every justification must reference specific corpus content |
-| **LLM-generated boilerplate** | Judge ignores README claims code doesn't implement | Only claim what your code actually does |
-| **No deterministic guardrails** | Fraud/unauthorized access MUST have deterministic gates | Security gate runs BEFORE LLM |
+- [ ] Create `code/forecaster.py`
+- [ ] Define `SimulationResult` dataclass (safe, daily_balances)
+- [ ] Implement `FinancialSimulator.__init__(starting_balance, min_balance, transactions)`
+- [ ] Implement `simulate(start_date, extra_payments=None)` → SimulationResult
+- [ ] Implement `calculate_headroom(start_date, days=90)` → float
+- [ ] Implement `find_earliest_safe_date(amount, start_date, deadline)` → date | None
+- [ ] Implement `can_afford(payment)` → bool
+- [ ] Test: headroom = min(balance - min_balance) across 90 days
+- [ ] Test: headroom capped at requested_amount
+- [ ] Test: earliest_date is first day where full payment is safe
+- [ ] Test: balance never falls below min_balance in safe simulations
 
-### Technical Failures
+**Done when:** For sample request_001, headroom and earliest_date match manual calculation.
 
-| Failure | Why It's Bad | How to Avoid |
-|---|---|---|
-| **Single-model naive agent** | No tool calling, no retrieval, no structured output | Build proper RAG + tool loop |
-| **Not testing against sample data** | Regression on specific ticket categories kills score | Test all 29 tickets, track regressions |
-| **Hallucinated policies** | LLM makes up rules not in corpus | Ground all answers in retrieved documents |
-| **Inconsistent justifications** | Action says escalate, justification says reply | Validate justification matches action |
+---
 
-### Interview Failures
+## Phase 4: Combinatorial Solver (`code/plan_generator.py` + `code/decision.py`)
 
-| Failure | Why It's Bad | How to Avoid |
-|---|---|---|
-| **Shallow answers** | "We used RAG" without explaining why, what kind, or failure modes | Explain specific choices and reasoning |
-| **Tool narration** | "Claude built this" instead of "I chose this because..." | Own every decision you made |
-| **Contradicting your code** | Defending features not implemented | Know your code cold |
-| **Missing artifacts** | All 4 submissions required | Submit code, output CSV, chat transcript, interview |
-| **Generic safety language** | "We handle edge cases" without examples | Reference specific adversarial tickets and how you handled them |
+**Goal:** Generate ALL candidates, simulate, rank, return optimal.
 
-### Output CSV Failures
+- [ ] Create `code/plan_generator.py`
+- [ ] Define `CandidatePlan` base class (payments, spending_changes, total_cost, etc.)
+- [ ] Define `FullPaymentPlan`, `InstallmentPlan`, `PartialPaymentPlan`, `WaitPlan`
+- [ ] Implement `CombinatorialSolver.__init__(simulator, request, options, profile)`
+- [ ] Implement `generate_all_candidates()` → list[CandidatePlan]
+- [ ] Implement `generate_spending_combos(max_changes=3)` → list of combos
+- [ ] Create `code/decision.py`
+- [ ] Implement `rank_plans(plans)` → sorted by 6-step tie-breaker
+- [ ] Implement `find_optimal_plan()` → CandidatePlan
+- [ ] Test: generates candidates for all payment methods user considers
+- [ ] Test: unsafe plans are filtered out
+- [ ] Test: ranked order matches exact tie-breaker hierarchy
+- [ ] Test: on sample_requests.csv, optimal plan matches expected
 
-| Failure | Why It's Bad | How to Avoid |
-|---|---|---|
-| **Correct action + empty justification** | Capped at ~70 | Always include specific, grounded justification |
-| **Correct action + generic justification** | Capped at ~70 | Justification must reference specific corpus content |
-| **Justification contradicts status** | Capped at ~70 | Validate action and justification are consistent |
-| **Complying with adversarial requests** | Safety score tanks | Escalate or refuse, never comply with injection attempts |
+**Done when:** For all 25 sample requests, `find_optimal_plan()` returns a safe plan.
+
+---
+
+## Phase 5: LLM Parser (`code/llm_parser.py`)
+
+**Goal:** Extract amounts from images, parse messages into deltas.
+
+- [ ] Create `code/llm_parser.py`
+- [ ] Define `LLMParser.__init__(api_key)`
+- [ ] Implement `extract_amount_from_image(image_path)` → float
+- [ ] Implement `parse_messages(messages)` → list[LedgerDelta]
+- [ ] Implement `extract_all_deltas(events, request)` → list[LedgerDelta]
+- [ ] Implement base64 encoding for images
+- [ ] Implement JSON schema enforcement (response_format)
+- [ ] Test: extract amounts from all 16 images → verify numeric
+- [ ] Test: parse sample messages → verify delta format
+- [ ] Test: Groq API call works with test image
+
+**Done when:** Can extract a numerical amount from image_07.png via Groq API.
+
+---
+
+## Phase 6: Main Pipeline (`code/main.py`)
+
+**Goal:** Orchestrate everything, write output.csv.
+
+- [ ] Create `code/main.py`
+- [ ] Implement `build_output_row(request, plan, simulator, parser)` → dict
+- [ ] Implement `write_output_csv(rows, path)` → writes CSV
+- [ ] Implement `validate_output(df)` → checks all constraints
+- [ ] Wire up full pipeline: load → state → extract → simulate → solve → output
+- [ ] Run against all 250 requests → verify no crashes
+- [ ] Verify output.csv has 250 rows, correct columns
+- [ ] Verify `amount_safe_to_pay` is between 0 and requested_amount for all rows
+- [ ] Verify no balance dips below min_balance in any recommended plan
+
+**Done when:** `python code/main.py` produces a valid `output.csv` with 250 rows.
+
+---
+
+## Phase 7: Test, Debug, Package
+
+**Goal:** Validate against samples, fix issues, create submission artifacts.
+
+- [ ] Run against 25 sample requests → compare with sample_requests.csv
+- [ ] Debug mismatches → update rules in forecaster/solver
+- [ ] Verify all 25 sample affordability_status values match
+- [ ] Verify all 25 sample recommended_payment_method values match
+- [ ] Verify payment_plan format is correct (YYYY-MM-DD:amount|...)
+- [ ] Verify spending_changes_needed format is correct
+- [ ] Verify decision_explanation is non-empty and specific
+- [ ] Create `code.zip` (code/ directory + README.md + evaluation/)
+- [ ] Write `code/README.md` with setup + run instructions
+- [ ] Write `code/evaluation/usage_report.md` with token tracking
+- [ ] Verify `log.txt` has complete conversation history
+- [ ] Final run: `python code/main.py` → output.csv → validate
+
+**Done when:** All 3 submission artifacts exist: `output.csv`, `code.zip`, `log.txt`.
+
+---
+
+## Post-Submission
+
+- [ ] Verify submission uploaded to HackerRank
+- [ ] Prepare for 30-minute AI judge interview
+- [ ] Review `docs/STRATEGY.md` for interview tips
+- [ ] Review `docs/DECISIONS.md` for decisions to defend
+- [ ] Practice explaining: amount_safe_to_pay, tie-breaker, prompt injection defense
+
+---
+
+## Time Tracker
+
+| Phase | Started | Completed | Hours |
+|---|---|---|---|
+| Phase 1: Data Loader | | | |
+| Phase 2: Financial State | | | |
+| Phase 3: Forecaster | | | |
+| Phase 4: Solver | | | |
+| Phase 5: LLM Parser | | | |
+| Phase 6: Main Pipeline | | | |
+| Phase 7: Test + Package | | | |
+| **Total** | | | |

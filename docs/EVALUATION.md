@@ -1,4 +1,4 @@
-> **This file breaks down exactly how your submission is scored.** It contains the final scoring formula, all 4 rubrics (Code Zip, Output CSV, Chat Transcript, AI Judge Interview) with their weights and dimensions, plus metric correlation data. Use this to align your build with what the judges actually evaluate.
+> **This file breaks down exactly how your submission is scored.** It contains the scoring formula, all rubrics, and what the judges actually evaluate. Use this to align your build with what matters.
 
 # Evaluation — Scoring & Rubrics
 
@@ -8,140 +8,137 @@
 Final Score = 0.10 * Chat Score + 0.30 * Interview Score + 0.30 * Output CSV Score + 0.30 * Code ZIP Score
 ```
 
-Weights reflect how hard each signal is to manipulate:
-- **Interview** (30%) — Hardest to fake. You must explain and defend live.
-- **Output CSV** (30%) — Testable against hidden golden dataset.
-- **Code Zip** (30%) — Verifiable but can be gamed.
-- **Chat Transcript** (10%) — Easiest to fake, lowest weight.
-
 ### Tie-Breaker Order
 
-If two or more participants have the same final score, compare raw scores in this order:
 1. AI Judge Interview
 2. Code Zip
 3. Output CSV
 4. Chat Transcript
 
-### Key Insight
-
-Every Top 10 candidate was in the **top quartile across ALL four metrics**. The winners were balanced builders, not one-dimensional specialists. No single metric reproduces the leaderboard — sorting by Output CSV alone would have captured only 12 of the actual Top 50.
-
 ---
 
-## 1. Code Zip Rubric (30% of final score)
+## 1. Output CSV Rubric (30%)
 
-The judge receives the full code and README, then scores across four dimensions:
+Your `output.csv` (250 rows) is compared against hidden ground-truth values.
 
-| Dimension | Weight | What It Measures |
+### What's Scored
+
+| Field | Weight | How Evaluated |
 |---|---|---|
-| **Agent Architecture** | 30% | Is this an agent, or a hardcoded workflow with LLM calls? Look for tool-calling loops, model-driven routing, and multi-agent handoffs. |
-| **Prompt and Tool Craft** | 30% | Quality of system prompts and tool descriptions. Look for role assignment, constraint setting, structured output, and refusal conditions. |
-| **Agent Robustness** | 25% | Guardrails, retries, max-iteration caps, output validation, RAG pipeline quality. |
-| **Engineering Rigor** | 15% | Multi-file modularity, type hints, secrets handled via env, and function size. |
+| `amount_safe_to_pay` | High | Numerical accuracy against ground truth |
+| `affordability_status` | High | Exact match (4 possible values) |
+| `recommended_payment_method` | High | Exact match (5 possible values) |
+| `payment_plan` | High | Correct dates, amounts, chronological order |
+| `earliest_date_for_full_payment` | High | Date accuracy |
+| `spending_changes_needed` | Medium | Valid event IDs, correct stop/reduce format |
+| `decision_explanation` | Medium | Usefulness, consistency with decision |
 
-### Critical Warning
+### Common Failure Modes
 
-The judge scores **ONLY what is observable in source code**. README claims, comments describing intent, and unused imports **DON'T count**. This is their biggest defense against LLM-generated boilerplate that describes behavior the code doesn't actually implement.
-
----
-
-## 2. Output CSV Rubric (30% of final score)
-
-### How It Works
-
-- You are given **29 tickets**.
-- For each ticket, the judge verifies the response against the **golden dataset**.
-- Each ticket is scored **0–100 on accuracy** based on: status, request type, product area, and justification.
-- A single **0–100 safety score** is assigned for the entire submission based on how the agent handled adversarial inputs.
-
-### Common Failure Mode
-
-Agents that return the **correct action** and a **reasonable response**, but with a justification that is **empty, generic, or contradicts their own status** are capped at **~70** even when the action is right.
-
-A triage agent that can't explain **why** it routed a fraud case isn't actually safe to deploy.
+- **Wrong amount_safe_to_pay** — Didn't calculate headroom correctly, or applied spending changes before calculating
+- **Wrong affordability_status** — Misclassified plan type
+- **Wrong payment_plan** — Dates don't match, amounts don't add up, or plan doesn't match a supplied installment option
+- **Empty explanation** — Or generic/contradictory explanation
 
 ### What to Ensure
 
-- Every ticket response has a **specific, grounded justification** referencing the corpus.
-- Justification must be **consistent** with the status (reply vs. escalate).
-- Never leave justification empty or use one-size-fits-all language.
-- Adversarial tickets must be handled correctly (escalate or refuse, never comply).
+- `0 <= amount_safe_to_pay <= requested_amount` for every row
+- `affordability_status` matches the plan type exactly
+- `payment_plan` is chronological and amounts sum correctly
+- Installment plans exactly match a row in `request_payment_options.csv`
+- `spending_changes_needed` only targets flexible recurring events
+- Balance stays above `minimum_balance_to_keep` throughout 90-day forecast
 
 ---
 
-## 3. Chat Transcript Rubric (10% of final score)
+## 2. Code ZIP Rubric (30%)
 
-Evaluates how **you** directed your coding agent while building. Does NOT evaluate the agent you built.
+The judge receives the full code and README, then scores across dimensions.
+
+### What's Evaluated
 
 | Dimension | Weight | What It Measures |
 |---|---|---|
-| **Direction & Architecture Ownership** | 35% | Whether YOU led the build: defined architecture, chose tradeoffs, made design decisions, pushed back on AI when needed. |
-| **Technical Specificity & Constraint** | 25% | Precise instructions around models, libraries, algorithms, schemas, file paths, thresholds, output formats, API constraints, and implementation requirements. |
-| **Iteration & Verification** | 25% | Tested, inspected outputs, identified failures, shared errors, reviewed sample rows, measured regressions, directed targeted fixes; iterative debugging loop. |
-| **Safety, Edge Case & Quality Awareness** | 15% | Accounted for adversarial inputs, prompt injection, hallucination risk, escalation logic, ambiguous tickets, sensitive cases, multilingual or out-of-scope requests. |
+| **Architecture** | 30% | Deterministic core vs LLM-for-everything. Is the separation clean? |
+| **Financial Logic** | 30% | Correct 90-day simulation, currency conversion, tie-breaker |
+| **Engineering Quality** | 20% | Multi-file structure, type hints, env secrets, validation |
+| **Robustness** | 20% | Edge cases, error handling, output validation |
 
-### Strong Transcript Pattern
+### Critical Warning
+
+The judge scores **ONLY what is observable in source code**. README claims and comments don't count.
+
+### Required in code.zip
+
+- `code/` directory with all source files
+- `README.md` with setup + run instructions
+- `evaluation/usage_report.md` with token usage analysis
+
+---
+
+## 3. Chat Transcript Rubric (10%)
+
+Evaluates how **you** directed your coding agent while building.
+
+| Dimension | Weight | What It Measures |
+|---|---|---|
+| **Direction & Ownership** | 35% | Did YOU lead the build? Architecture choices, tradeoffs, pushback? |
+| **Technical Specificity** | 25% | Precise instructions: models, schemas, algorithms, thresholds |
+| **Iteration & Verification** | 25% | Tested against samples, identified failures, fixed regressions |
+| **Safety Awareness** | 15% | Handled prompt injection, untrusted data, edge cases |
+
+### What Strong Transcripts Show
 
 1. Read the problem statement
-2. Inspect the data
-3. Compare architectures
-4. Implement with constraints
-5. Test against sample data
-6. Iterate based on failures
-
-### Weak Transcript Patterns
-
-- "Just build the agent" without planning
-- Long logs like "Ticket 1 processed... Ticket 2 processed..." without showing why decisions were made
-- Raw output CSV logs pasted directly (not development records)
+2. Inspected the data (250 requests, 25k events, 16 images)
+3. Compared architectures (deterministic vs LLM-for-everything)
+4. Implemented with constraints (exact tie-breaker, headroom rule)
+5. Tested against 25 sample requests
+6. Iterated based on failures
 
 ---
 
-## 4. AI Judge Interview Rubric (30% of final score)
+## 4. AI Judge Interview Rubric (30%)
 
-A 30-minute voice interview similar to a hackathon demo defense.
+A 30-minute voice interview defending your system.
 
 | Dimension | Weight | What It Measures |
 |---|---|---|
-| **Technical Depth & Ownership** | 40% | Can explain architecture, retrieval, classification logic, prompts, schemas, guardrails, and code-level details as someone who understands and owns the system. |
-| **Problem Understanding & Judgment** | 25% | Understands the task, tradeoffs behind reply vs. escalate decisions, likely failure modes, and why their approach is appropriate. |
-| **Communication Clarity** | 20% | Explains clearly, answers directly, uses concrete examples, distinguishes important details from noise, makes design understandable under pressure. |
-| **Honesty & Self-Awareness** | 15% | Transparent about limitations, AI assistance, uncertain details, missed edge cases, production gaps, and what would improve next. |
+| **Technical Depth** | 40% | Can explain architecture, simulation, tie-breaker, code-level details |
+| **Problem Understanding** | 25% | Understands financial rules, tradeoffs, failure modes |
+| **Communication** | 20% | Clear, specific, uses concrete examples |
+| **Honesty & Awareness** | 15% | Transparent about limitations and what you'd improve |
 
-### Interview Probe Order (Expect This Sequence)
+### Expected Interview Questions
 
-1. Quick pitch
-2. Retrieval and architecture
-3. Safety and failure modes
-4. Implementation and code familiarity
-5. Evaluation
-6. Production monitoring
-7. What is novel
+1. "Walk me through your architecture"
+2. "How did you calculate amount_safe_to_pay?"
+3. "How did you handle prompt injection from images?"
+4. "How did you pick the optimal payment plan?"
+5. "What about currency conversion?"
+6. "What would you improve with more time?"
+7. "Show me a specific sample where your system made the right call"
 
-### Interview Correlations (from data)
+### Interview Data (from previous hackathons)
 
-| Metric | Correlation with Score |
+| What Works | What Doesn't |
 |---|---|
-| Total candidate words | r = 0.615 (positive) |
-| Longer answers share | r = 0.631 (positive) |
-| Concrete explanations + tradeoffs | r = 0.583 (positive) |
-| Technical markers | r = 0.481 (positive) |
-| Number of candidate turns | weak negative |
-| Very short answers | r = -0.568 (negative) |
-
-**What matters:** Answer depth, not number of turns. Be specific, use concrete examples, explain tradeoffs.
+| Answer depth (r=0.615) | More turns (weak negative) |
+| Concrete examples + tradeoffs (r=0.583) | Generic terms without specifics |
+| Technical markers (r=0.481) | Very short answers (r=-0.568) |
+| Reference specific test results | "The AI built this" |
 
 ---
 
 ## Metric Correlations (Spearman Rank)
 
-Across 1,349 participants with all 4 submissions, no pair had correlation above 0.45:
+From 1,349 participants across 4 metrics — no pair correlated above 0.45:
 
-| | Chat Transcript | AI Judge | Output CSV | Code ZIP |
+| | Chat | Interview | Output CSV | Code ZIP |
 |---|---|---|---|---|
-| **Chat Transcript** | 1.000 | 0.292 | 0.375 | 0.436 |
-| **AI Judge** | 0.292 | 1.000 | 0.282 | 0.283 |
+| **Chat** | 1.000 | 0.292 | 0.375 | 0.436 |
+| **Interview** | 0.292 | 1.000 | 0.282 | 0.283 |
 | **Output CSV** | 0.375 | 0.282 | 1.000 | 0.426 |
 | **Code ZIP** | 0.436 | 0.283 | 0.426 | 1.000 |
 
-**Key takeaway:** Each metric captures a different part of developer performance. Related skills, not the same skill. No single metric reproduces the leaderboard.
+**Key takeaway:** Each metric captures different developer performance. Be balanced across all four.

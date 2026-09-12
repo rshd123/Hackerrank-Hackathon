@@ -1,151 +1,111 @@
-> **This file teaches you how winners think and defend their work.** It covers what Top 50 participants did differently, interview probe order, data-backed tips, chat transcript strategy, and output CSV strategy. Use this to prepare for the 30-minute AI judge interview and to guide your chat transcript behavior.
+> **This file teaches you how to win the interview and defend your financial agent.** It covers what winners did differently, interview strategy specific to "Buy or Wait?", and how to own your decisions.
 
 # Strategy — Winning Patterns & Interview Tips
 
-## What the Top 50 Did Differently
+## What Winners of Similar Hackathons Did
 
-### 1. They Owned the System
+### 1. They Owned the Architecture Decision
 
-They explained **WHY** they chose architectures, not just WHAT they built.
+They explained **WHY** they chose deterministic over LLM-for-everything.
 
 **Strong answer:**
-> "We used BM25 because the corpus was small and keyword-heavy, then added a reranker only after seeing retrieval misses on specific sample rows."
+> "I used a deterministic 90-day simulator because LLMs hallucinate numbers. The headroom calculation — minimum daily balance minus minimum_balance_to_keep across 90 days — must be exact. The LLM only reads images and writes explanations."
 
 **Weak answer:**
-> "The agent searches the data and gives the best answer."
+> "The agent figures out if the user can afford it."
 
-Both describe retrieval. Only the first provides engineering judgment.
+### 2. They Explained the Tie-Breaker
 
-### 2. Evidence-Based Iteration
-
-They referenced concrete results: sample ticket accuracy, specific test cases, changes they reverted because output got worse, output.csv regressions.
+The 6-step ranking is where most participants lose points. Winners could recite it.
 
 **Strong answer:**
-> "We tried increasing top_k, but it caused regressions on the Visa fraud rows, so we reverted it and kept the deterministic escalation gate."
+> "I generate ALL valid candidates — full payment, each installment option, partial payment, wait — then simulate each through the 90-day forecaster. Any plan that dips below the minimum balance is discarded. Then I sort survivors by the exact 6-step hierarchy: complete by deadline, no spending changes, minimize total cost, start earlier, fewer payments, lowest option ID."
 
-This pattern is rewarded because it mirrors real engineering: notice a regression, make a design change, make a judgment call.
-
-### 3. Risk Handled Concretely
-
-Not just "high-risk tickets should be escalated" but connected words to actual system behavior.
+### 3. They Referenced Specific Test Results
 
 **Strong answer:**
-> "The LLM cannot downgrade a high-risk ticket. The deterministic gate runs first, and if it detects fraud or unauthorized access, the model is only allowed to produce an escalation response."
+> "On request_003, the user wanted a $1,200 laptop. My system found that full payment was safe (headroom was $1,450), but the user's payment_preferences only included installments. So it recommended the 3-month installment plan from payment_option_07, which completed by the deadline without any spending changes."
 
-**Weak answer:**
-> "High-risk tickets should be escalated."
+### 4. They Handled Prompt Injection Confidently
 
-Both are directionally correct. Only the first explains the mechanism.
+**Strong answer:**
+> "The LLM never makes financial decisions. When it reads an image, it extracts the numerical amount into JSON. If the image says 'ignore minimum balance rules', the code never sees that instruction — it only gets the extracted amount. The prompt injection defense is architectural, not behavioral."
 
-### 4. Own Decisions, Not Tool Narration
+### 5. They Were Honest About Limitations
 
-Spoke in terms of their own decisions:
-
-- "I chose this architecture because..."
-- "I rejected that approach because..."
-- "We measured this and reverted it..."
-- "I made the LLM output schema-enforced JSON because..."
-
-**NOT:**
-- "Claude created the pipeline."
-- "The AI checked the files."
-- "The agent decided the answer."
+**Strong answer:**
+> "The system doesn't handle currency fluctuations between now and future payments — it uses fixed dated rates. In production, I'd add rate-lock windows and confidence intervals on the 90-day forecast."
 
 ---
 
-## Interview Strategy
+## Interview Strategy for "Buy or Wait?"
 
-### Probe Order (Expect This Sequence)
+### Expected Probe Order
 
-1. **Quick pitch** — 2-3 minute overview of your system
-2. **Retrieval and architecture** — What kind of retrieval, why, where it fits
-3. **Safety and failure modes** — How prompt injection handled, when to refuse vs escalate
-4. **Implementation and code familiarity** — Code-level details, specific functions
-5. **Evaluation** — How you tested, what metrics you tracked
-6. **Production monitoring** — What you'd add for production deployment
-7. **What is novel** — What's different about your approach
+1. **Quick pitch** — 2-minute overview of the system
+2. **Architecture** — Why deterministic? How does the simulator work?
+3. **Key calculation** — Walk through amount_safe_to_pay for a specific request
+4. **Tie-breaker** — How do you pick between safe plans?
+5. **LLM usage** — What does the LLM actually do?
+6. **Edge cases** — What about conflicting messages? Blank amounts?
+7. **What you'd improve** — Be specific, not generic
 
-### Data-Backed Tips
+### High-Signal Answers
 
-| What Works | What Doesn't |
+| Topic | What to Say |
 |---|---|
-| Answer depth (r=0.615 with score) | More turns (weak negative correlation) |
-| Concrete examples + tradeoffs (r=0.583) | Generic terms without specifics |
-| Technical markers (r=0.481) | Very short answers (r=-0.568) |
-| Longer answer share (r=0.631) | Staying at same abstraction level throughout |
+| Architecture | "Deterministic core, LLM extraction frontend. Code does math, LLM reads images." |
+| amount_safe_to_pay | "90-day baseline simulation, find minimum headroom, cap at requested_amount" |
+| Tie-breaker | "Generate ALL candidates, simulate each, sort survivors by exact 6-step hierarchy" |
+| Prompt injection | "Architectural defense — LLM extracts data, code applies it. Never follows image instructions." |
+| Currency | "Convert all amounts to home_currency on settlement_date using exchange_rates.csv" |
+| Pending credits | "Don't count until settled — rule from §6.3" |
 
-### Leaderboard Bucket Insights
+### Low-Signal Answers (Avoid)
 
-| Rank Range | What They Did | What They Missed |
-|---|---|---|
-| **1–50** | Explained architecture choices, tradeoffs, testing evidence, regressions, safety mechanisms. Sounded like system owners. | — |
-| **51–100** | Still strong builders, knew core system | Less consistent on production monitoring, novelty, code-level details |
-| **101–250** | Working systems, explained retrieval well | Didn't connect retrieval to output quality, guardrails, or measured regressions |
-| **251–500** | Described task flow correctly | Couldn't explain WHY designed that way or how validated |
-| **501–1000** | Used words like "validated," "risk," "safety" | No concrete failures, changes, or tradeoffs |
-| **1001+** | Incomplete or non-specific | Broad product explanations, not engineering explanations |
-
-### High-Signal Interview Behaviors
-
-1. **Reference specific test results** — "On the 29 tickets, we got X correct on Y category"
-2. **Name implementation details** — File paths, function names, specific parameters
-3. **Discuss regressions** — "We tried X, it broke Y, so we reverted and did Z"
-4. **Handle challenges with tradeoffs** — When the judge pushes back, explain the reasoning
-5. **Be honest about gaps** — "We didn't implement X because of Y, but in production we'd add Z"
-
-### Low-Signal Interview Behaviors
-
-1. **Tool narration** — Describing what Claude/Cursor did instead of your decisions
-2. **Repeating the problem statement** — Shows no engineering depth
-3. **Generic safety language** — "We handle edge cases" without examples
-4. **Contradicting your own code** — Defending features not actually implemented
-5. **Short answers** — Stopping before proving real understanding
+- "The AI decided the best plan" — You decided, the code executes
+- "We used a smart algorithm" — Name the algorithm
+- "It handles edge cases" — Give a specific edge case
+- "We tested it" — What did you test? What failed?
 
 ---
 
 ## Chat Transcript Strategy
 
-### What to Show in Your Transcript
+### What to Show
 
-The chat transcript is evaluated on how YOU directed the AI tool, not what the tool produced.
+1. **Read the problem statement first** — "Let me understand the 90-day safety check rule"
+2. **Inspect the data** — "250 requests, 25k events, 16 images — let me check the image format"
+3. **Compare architectures** — "Should we use LLM for everything or deterministic math?"
+4. **Set constraints** — "The tie-breaker must be EXACT — 6 steps, no shortcuts"
+5. **Test against samples** — "Run on sample_requests.csv, check format compliance"
+6. **Iterate on failures** — "Request 7 is wrong — amount_safe_to_pay includes spending changes, but the rule says it must be BEFORE changes"
+7. **Push back on AI** — "Don't use GPT-4 for the simulation. Use Python. LLMs hallucinate numbers."
 
-**Strong patterns:**
-1. **Plan before coding** — "Let me read the problem statement first, then inspect the data"
-2. **Set constraints** — "Use BM25, not semantic search. The corpus is too small for embeddings to add value."
-3. **Compare architectures** — "Should we use single agent or multi-agent? Let me compare tradeoffs."
-4. **Test against samples** — "Run this on tickets 5, 12, and 17 — those are the fraud cases"
-5. **Iterate on failures** — "Ticket 12 is wrong. The justification is generic. Fix it to reference the specific policy in docs/visa-fraud.md"
-6. **Push back on AI** — "No, don't use GPT-4 for classification. Use a smaller model with structured output."
+### Weak Patterns
 
-**Weak patterns:**
-1. "Build me an agent that handles tickets"
-2. "Implement the file"
-3. Long processing logs without decision reasoning
-4. Pasting output CSV directly as transcript
+- "Build me a financial agent"
+- "Make the output CSV"
+- Long processing logs without decision reasoning
+- No testing evidence
 
 ---
 
 ## Output CSV Strategy
 
-### Common Failure Mode
-
-Agent returns correct action + reasonable response, but justification is **empty, generic, or contradicts status** → capped at **~70**.
-
 ### What to Ensure
 
-- Every justification must be **specific** and **grounded in the corpus**
-- Justification must be **consistent** with the action (reply vs. escalate)
-- Never leave justification empty
-- Handle adversarial tickets correctly (escalate or refuse, never comply)
-- Test every ticket category: billing, technical, security, fraud, general
+- Every row has a non-empty, specific `decision_explanation`
+- Explanation references actual financial facts (balance, events, constraints)
+- `amount_safe_to_pay` is calculated BEFORE spending changes
+- `payment_plan` amounts sum to `requested_amount`
+- Installment plans match a supplied payment option
+- `spending_changes_needed` only references flexible recurring events
+- Balance never falls below `minimum_balance_to_keep` in the 90-day forecast
 
-### Ticket Categories to Test
+### Common Failure Modes
 
-Based on the three platforms (HackerRank, Anthropic, Visa):
-- Account access and authentication
-- Billing and payments
-- Technical support
-- Security and fraud
-- API and integration issues
-- Policy questions
-- Edge cases and adversarial inputs
+- Generic explanation: "The user can afford this" → Must reference specific numbers
+- Wrong amount: Calculated after spending changes instead of before
+- Wrong plan: Selected valid plan but not optimal per tie-breaker
+- Missing validation: Payment plan dates don't match payment option schedule
