@@ -35,3 +35,8 @@ log.txt
 # API keys
 *.key
 credentials/
+
+output.csv
+code.zip
+dataset.zip
+BUGS.md

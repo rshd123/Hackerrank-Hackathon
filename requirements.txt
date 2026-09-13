@@ -1,13 +1,16 @@
-# Core dependencies
-openai>=1.0.0
+# Data manipulation
+pandas>=2.0.0
+
+# LLM API (Groq - free tier)
+groq>=0.4.0
+
+# Data validation
 pydantic>=2.0.0
+
+# Environment variables
 python-dotenv>=1.0.0
 
-# RAG / Retrieval
-rank-bm25>=0.2.2
-sentence-transformers>=2.2.0
-
-# Utilities
+# Progress bars
 tqdm>=4.65.0
 
 # Testing

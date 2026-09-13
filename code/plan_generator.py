@@ -1,278 +1,279 @@
 """
-plan_generator.py — Generate and rank payment plans
+plan_generator.py — Generate ALL candidate payment plans.
 
-Tries full payment, installments, partial payment, wait, and not_recommended.
-Ranks by: complete by deadline > no changes > min cost > earlier > fewer payments.
+Combinatorial solver: generates full_payment, installment, and partial_payment
+candidates for every request. Pure deterministic logic — no LLM calls.
 """
 
-from datetime import datetime, timedelta
-from collections import defaultdict
-import math
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from typing import Optional
+
+from code.data_loader import DataLoader, PaymentOption, Request
+from code.financial_state import FinancialState
+from code.forecaster import Forecaster, ForecastResult, PaymentScenario
 
 
-def parse_date(s):
-    if not s:
-        return None
-    return datetime.strptime(s, "%Y-%m-%d").date()
+@dataclass
+class CandidatePlan:
+    """A generated candidate payment plan before ranking."""
+    request_id: str
+    method: str  # full_payment, installments, partial_payment, wait, not_recommended
+    option_id: Optional[str] = None
+    payment_plan: list[tuple[date, float]] = field(default_factory=list)
+    total_cost: float = 0.0
+    num_payments: int = 0
+    first_payment_date: Optional[date] = None
+    final_payment_date: Optional[date] = None
+    safe: bool = False
+    forecast: Optional[ForecastResult] = None
+    spending_changes: list[str] = field(default_factory=list)
 
 
-def parse_float(s):
-    if not s:
-        return 0.0
-    return float(s.replace(",", ""))
+class PlanGenerator:
+    """Generate all candidate payment plans for a request."""
 
+    def __init__(self, state: FinancialState, request: Request, data_loader: DataLoader):
+        self.state = state
+        self.request = request
+        self.forecaster = Forecaster(state, request)
+        self.data_loader = data_loader
 
-def try_full_payment(
-    requested_amount,
-    request_date,
-    user_profile,
-    recurring_expenses_monthly,
-    income_schedule,
-    pending_debits,
-    can_afford_fn,
-    find_earliest_fn,
-):
-    """Try paying the full amount today."""
-    balance = parse_float(user_profile.get("current_available_balance", "0"))
-    min_balance = parse_float(user_profile.get("minimum_balance_to_keep", "0"))
-    payment_prefs = user_profile.get("payment_methods_user_will_consider", "")
-    
-    if "full_payment" not in payment_prefs:
-        return None
-    
-    is_safe, min_bal = can_afford_fn(
-        balance, min_balance, requested_amount, request_date,
-        recurring_expenses_monthly, income_schedule, pending_debits
-    )
-    
-    if is_safe:
-        return {
-            "method": "full_payment",
-            "status": "affordable_now",
-            "amount_safe_to_pay": requested_amount,
-            "payment_plan": f"{request_date}:{requested_amount}",
-            "earliest_date": request_date,
-            "spending_changes": "none",
-            "total_cost": requested_amount,
-            "num_payments": 1,
-        }
-    return None
+        # Load payment options
+        self.options = data_loader.load_payment_options(request.request_id)
 
+        # Filter options by user preferences
+        self.valid_options = self._filter_options()
 
-def try_installments(
-    requested_amount,
-    request_date,
-    desired_completion_date,
-    user_profile,
-    payment_options,
-    recurring_expenses_monthly,
-    income_schedule,
-    pending_debits,
-    can_afford_fn,
-):
-    """Try each installment option."""
-    balance = parse_float(user_profile.get("current_available_balance", "0"))
-    min_balance = parse_float(user_profile.get("minimum_balance_to_keep", "0"))
-    payment_prefs = user_profile.get("payment_methods_user_will_consider", "")
-    max_months = user_profile.get("max_installment_months", "")
-    
-    if "installments" not in payment_prefs:
-        return None
-    
-    best = None
-    for opt in payment_options:
-        if opt.get("payment_method") != "installments":
-            continue
-        
-        num_payments = int(opt.get("number_of_payments", "1"))
-        payment_amount = parse_float(opt.get("payment_amount", "0"))
-        first_date_str = opt.get("first_payment_date", request_date)
-        freq_days = int(opt.get("payment_frequency_days", "30"))
-        total_payable = parse_float(opt.get("total_payable_amount", "0"))
-        
-        # Check max_installment_months
-        if max_months:
-            max_m = int(max_months)
-            total_days = num_payments * freq_days
-            if total_days > max_m * 30:
+    def _filter_options(self) -> list[PaymentOption]:
+        """Filter payment options by user preferences and constraints."""
+        valid = []
+        for opt in self.options:
+            # Check method preference
+            if opt.method not in self.state.profile.payment_preferences:
                 continue
-        
-        # Generate payment dates
-        plan_dates = []
-        current_date = parse_date(first_date_str)
-        for i in range(num_payments):
-            plan_dates.append(current_date)
-            current_date += timedelta(days=freq_days)
-        
-        # Check if plan completes by desired_completion_date
-        if desired_completion_date:
-            completion = parse_date(desired_completion_date)
-            if plan_dates[-1] > completion:
+
+            # Check installment months constraint
+            if opt.method == "installments":
+                max_months = self.state.profile.max_installment_months
+                if max_months is not None:
+                    # Convert num_payments to months (assume ~30 days per payment)
+                    months = opt.num_payments  # each payment is roughly monthly
+                    if months > max_months:
+                        continue
+
+            valid.append(opt)
+        return valid
+
+    def generate_full_payment_candidates(self) -> list[CandidatePlan]:
+        """Generate full payment candidates.
+
+        Only generate if full_payment is in the user's valid_options.
+        If the user doesn't accept full_payment as a method, we shouldn't
+        recommend it (§6.3: respect user preferences).
+        """
+        candidates = []
+
+        # Check if full_payment is a valid option for this user
+        has_full_payment = any(o.method == "full_payment" for o in self.valid_options)
+
+        if has_full_payment:
+            scenario = self.forecaster.test_full_payment_now()
+            headroom = self.forecaster.calculate_headroom()
+
+            # Full payment on request_date is safe when the PROJ simulation
+            # confirms the balance stays above min for all 90 days.
+            full_payment_now_safe = scenario.forecast.safe
+            candidates.append(CandidatePlan(
+                request_id=self.request.request_id,
+                method="full_payment",
+                option_id=None,
+                payment_plan=[(self.request.request_date, self.forecaster.requested_amount)],
+                total_cost=self.forecaster.requested_amount,
+                num_payments=1,
+                first_payment_date=self.request.request_date,
+                final_payment_date=self.request.request_date,
+                safe=full_payment_now_safe,
+                forecast=scenario.forecast,
+            ))
+
+            if not candidates[0].safe:
+                earliest = self.forecaster.find_earliest_full_payment_date()
+                if earliest and earliest != self.request.request_date:
+                    scenario = self.forecaster._simulate_with_payment(
+                        self.forecaster._build_base_ledger(),
+                        earliest,
+                        self.forecaster.requested_amount,
+                    )
+                    candidates.append(CandidatePlan(
+                        request_id=self.request.request_id,
+                        method="wait",
+                        option_id=None,
+                        payment_plan=[(earliest, self.forecaster.requested_amount)],
+                        total_cost=self.forecaster.requested_amount,
+                        num_payments=1,
+                        first_payment_date=earliest,
+                        final_payment_date=earliest,
+                        safe=scenario.safe,
+                        forecast=scenario,
+                    ))
+
+        return candidates
+
+    def generate_installment_candidates(self) -> list[CandidatePlan]:
+        """Generate installment payment candidates.
+
+        Uses each supplied PaymentOption's first_payment_date and
+        payment_frequency_days to build the exact payment schedule.
+        §6.3: Validates per-period balance safety.
+        """
+        candidates = []
+
+        for opt in self.valid_options:
+            if opt.method != "installments":
                 continue
-        
-        # Simulate: can we make all payments while staying above min?
-        sim_balance = balance
-        all_safe = True
-        for pay_date in plan_dates:
-            # Add income up to this date
-            for inc in income_schedule:
-                if inc["date"] and inc["date"] <= pay_date:
-                    sim_balance += inc["amount"]
-            
-            # Subtract recurring expenses up to this date
-            days_elapsed = (pay_date - parse_date(request_date)).days
-            monthly_total = sum(recurring_expenses_monthly.values())
-            sim_balance -= (monthly_total / 30) * days_elapsed
-            
-            # Make payment
-            sim_balance -= payment_amount
-            
-            if sim_balance < min_balance:
-                all_safe = False
+
+            scenario = self.forecaster.test_installment_option(opt)
+
+            # Build payment schedule from the supplied option dates
+            plan = []
+            pay_date = opt.first_payment_date
+            for i in range(opt.num_payments):
+                plan.append((pay_date, opt.amount))
+                if opt.frequency_days:
+                    pay_date = pay_date + timedelta(days=opt.frequency_days)
+                else:
+                    pay_date = pay_date + timedelta(days=30)
+
+            total_cost = opt.amount * opt.num_payments
+
+            candidates.append(CandidatePlan(
+                request_id=self.request.request_id,
+                method="installments",
+                option_id=opt.option_id,
+                payment_plan=plan,
+                total_cost=total_cost,
+                num_payments=opt.num_payments,
+                first_payment_date=plan[0][0] if plan else None,
+                final_payment_date=plan[-1][0] if plan else None,
+                safe=scenario.forecast.safe,
+                forecast=scenario.forecast,
+            ))
+
+        return candidates
+
+    def generate_partial_payment_candidates(self) -> list[CandidatePlan]:
+        """Generate partial payment candidates (if allowed).
+
+        §6.2: partial_payment uses amount_safe_to_pay on request_date,
+        then the remainder on a future date when the remaining amount is safe.
+        """
+        candidates = []
+
+        if not self.request.allows_partial_payment:
+            return candidates
+
+        headroom = self.forecaster.calculate_headroom()
+        if headroom <= 0:
+            # Fallback: use PROJ headroom if PROJ simulation is safe
+            proj_scenario = self.forecaster.test_full_payment_now()
+            if proj_scenario.forecast.safe:
+                proj_headroom = proj_scenario.forecast.min_balance_during - self.forecaster.state.profile.min_balance
+                if proj_headroom > 0:
+                    headroom = proj_headroom
+            if headroom <= 0:
+                return candidates  # can't do any payment
+
+        # Cap partial at requested_amount
+        partial_amount = min(headroom, self.forecaster.requested_amount)
+        remaining = self.forecaster.requested_amount - partial_amount
+
+        if remaining <= 0:
+            return candidates  # this is full payment, not partial
+
+        # Find earliest date when the REMAINING amount can be safely paid
+        # (not the full amount - the remaining is smaller so it may be safe earlier)
+        earliest_second = None
+        for day_offset in range(90):
+            pay_date = self.request.request_date + timedelta(days=day_offset)
+            if pay_date <= self.request.request_date:
+                continue
+            # Simulate paying the remaining amount on this date
+            scenario = self.forecaster.test_partial_payment(
+                partial_amount, pay_date, remaining
+            )
+            if scenario.forecast.safe:
+                earliest_second = pay_date
                 break
-        
-        if all_safe:
-            # Check payment date matches sample format
-            plan_str = "|".join(f"{d}:{payment_amount}" for d in plan_dates)
-            
-            if best is None or total_payable < best["total_cost"]:
-                best = {
-                    "method": "installments",
-                    "status": "affordable_with_plan",
-                    "amount_safe_to_pay": payment_amount,
-                    "payment_plan": plan_str,
-                    "earliest_date": str(plan_dates[-1]),
-                    "spending_changes": "none",
-                    "total_cost": total_payable,
-                    "num_payments": num_payments,
-                    "option_id": opt.get("payment_option_id", ""),
-                }
-    
-    return best
 
+        if earliest_second is None:
+            # Try the full payment earliest date as fallback
+            earliest_second = self.forecaster.find_earliest_full_payment_date()
+            if earliest_second is None:
+                return candidates
 
-def try_partial_payment(
-    requested_amount,
-    request_date,
-    desired_completion_date,
-    user_profile,
-    recurring_expenses_monthly,
-    income_schedule,
-    pending_debits,
-    can_afford_fn,
-    find_earliest_fn,
-):
-    """Try paying part today and the rest by deadline."""
-    balance = parse_float(user_profile.get("current_available_balance", "0"))
-    min_balance = parse_float(user_profile.get("minimum_balance_to_keep", "0"))
-    payment_prefs = user_profile.get("payment_methods_user_will_consider", "")
-    
-    if "partial_payment" not in payment_prefs:
-        return None
-    
-    if not desired_completion_date:
-        return None
-    
-    # Find what we can safely pay today
-    max_today = 0
-    for try_amount in range(int(requested_amount), 0, -100):
-        is_safe, _ = can_afford_fn(
-            balance, min_balance, try_amount, request_date,
-            recurring_expenses_monthly, income_schedule, pending_debits
+        # Check if second payment meets deadline
+        if self.request.desired_completion_date and earliest_second > self.request.desired_completion_date:
+            # Can't meet deadline with partial payment
+            return candidates
+
+        scenario = self.forecaster.test_partial_payment(
+            partial_amount, earliest_second, remaining
         )
-        if is_safe:
-            max_today = try_amount
-            break
-    
-    if max_today <= 0 or max_today >= requested_amount:
-        return None
-    
-    remaining = requested_amount - max_today
-    
-    # Check if we can pay remaining by deadline
-    earliest_rest = find_earliest_fn(
-        balance, min_balance, remaining, request_date,
-        desired_completion_date, recurring_expenses_monthly,
-        income_schedule, pending_debits
-    )
-    
-    if earliest_rest and earliest_rest <= parse_date(desired_completion_date):
-        return {
-            "method": "partial_payment",
-            "status": "affordable_with_plan",
-            "amount_safe_to_pay": max_today,
-            "payment_plan": f"{request_date}:{max_today}|{earliest_rest}:{remaining}",
-            "earliest_date": str(earliest_rest),
-            "spending_changes": "none",
-            "total_cost": requested_amount,
-            "num_payments": 2,
-        }
-    return None
+        candidates.append(CandidatePlan(
+            request_id=self.request.request_id,
+            method="partial_payment",
+            payment_plan=[
+                (self.request.request_date, partial_amount),
+                (earliest_second, remaining),
+            ],
+            total_cost=self.forecaster.requested_amount,
+            num_payments=2,
+            first_payment_date=self.request.request_date,
+            final_payment_date=earliest_second,
+            safe=scenario.forecast.safe,
+            forecast=scenario.forecast,
+        ))
 
+        return candidates
 
-def try_wait(
-    requested_amount,
-    request_date,
-    desired_completion_date,
-    user_profile,
-    recurring_expenses_monthly,
-    income_schedule,
-    pending_debits,
-    find_earliest_fn,
-):
-    """Wait until full payment becomes safe."""
-    payment_prefs = user_profile.get("payment_methods_user_will_consider", "")
-    
-    if "full_payment" not in payment_prefs:
-        return None
-    
-    earliest = find_earliest_fn(
-        parse_float(user_profile.get("current_available_balance", "0")),
-        parse_float(user_profile.get("minimum_balance_to_keep", "0")),
-        requested_amount,
-        request_date,
-        desired_completion_date or (parse_date(request_date) + timedelta(days=90)).isoformat(),
-        recurring_expenses_monthly,
-        income_schedule,
-        pending_debits,
-    )
-    
-    if earliest:
-        return {
-            "method": "wait",
-            "status": "affordable_later",
-            "amount_safe_to_pay": 0,
-            "payment_plan": f"{earliest}:{requested_amount}",
-            "earliest_date": str(earliest),
-            "spending_changes": "none",
-            "total_cost": requested_amount,
-            "num_payments": 1,
-        }
-    return None
+    def generate_wait_candidate(self) -> CandidatePlan:
+        """Generate a 'wait' candidate (recommend waiting)."""
+        earliest = self.forecaster.find_earliest_full_payment_date()
+        return CandidatePlan(
+            request_id=self.request.request_id,
+            method="wait",
+            payment_plan=[],
+            total_cost=0,
+            num_payments=0,
+            first_payment_date=None,
+            final_payment_date=None,
+            safe=False,
+            forecast=None,
+        )
 
+    def generate_not_recommended(self) -> CandidatePlan:
+        """Generate a 'not_recommended' candidate (never affordable)."""
+        return CandidatePlan(
+            request_id=self.request.request_id,
+            method="not_recommended",
+            payment_plan=[],
+            total_cost=0,
+            num_payments=0,
+            first_payment_date=None,
+            final_payment_date=None,
+            safe=False,
+            forecast=None,
+        )
 
-def rank_plans(plans):
-    """Rank plans by priority rules."""
-    if not plans:
-        return None
-    
-    def sort_key(p):
-        # 1. Complete by deadline (affordable_now/with_plan > later > not)
-        status_rank = {
-            "affordable_now": 0,
-            "affordable_with_plan": 1,
-            "affordable_later": 2,
-            "not_affordable": 3,
-        }
-        # 2. No spending changes needed
-        changes = 0 if p["spending_changes"] == "none" else 1
-        # 3. Minimize total cost
-        cost = p["total_cost"]
-        # 4. Earlier start
-        earliest = p.get("earliest_date", "9999-99-99")
-        # 5. Fewer payments
-        num_pay = p["num_payments"]
-        
-        return (status_rank.get(p["status"], 3), changes, cost, earliest, num_pay)
-    
-    return sorted(plans, key=sort_key)[0]
+    def generate_all_candidates(self) -> list[CandidatePlan]:
+        """Generate ALL candidate payment plans."""
+        candidates = []
+        candidates.extend(self.generate_full_payment_candidates())
+        candidates.extend(self.generate_installment_candidates())
+        candidates.extend(self.generate_partial_payment_candidates())
+        candidates.append(self.generate_wait_candidate())
+        candidates.append(self.generate_not_recommended())
+        return candidates
