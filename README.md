@@ -1,6 +1,4 @@
-# {{PROJECT_NAME}}
-
-> **Note:** `{{PROJECT_NAME}}` is a placeholder — replace it with the final project name.
+# Smart Buy
 
 An AI-powered **financial affordability agent**. Given a user's request — *"Can I afford this laptop?"* — it decides whether they should **pay in full, pay partially, use installments, wait, or decline**, while guaranteeing the user never drops below their minimum balance over a 90-day forecast.
 
@@ -10,19 +8,16 @@ It combines a **multimodal LLM** (perception, language, judgment) with a **deter
 
 ## Table of Contents
 
-- [How It Works](#how-it-works)
-- [Architecture](#architecture)
-- [Pipeline](#pipeline)
-- [Decision Rules](#decision-rules)
-- [Output Contract](#output-contract)
-- [Dataset](#dataset)
-- [Repository Layout](#repository-layout)
-- [Setup](#setup)
-- [Usage](#usage)
-- [Validation & Accuracy](#validation--accuracy)
-- [Modules](#modules)
-- [Tech Stack](#tech-stack)
-- [Documentation](#documentation)
+<div align="center">
+  <a href="#how-it-works">How It Works</a> |
+  <a href="#architecture">Architecture</a> |
+  <a href="#pipeline">Pipeline</a> |
+  <a href="#decision-rules">Decision Rules</a><br>
+  <a href="#dataset">Dataset</a> |
+  <a href="#validation--accuracy">Validation &amp; Accuracy</a> |
+  <a href="#modules">Modules</a> |
+  <a href="#documentation">Documentation</a>
+</div>
 
 ---
 
