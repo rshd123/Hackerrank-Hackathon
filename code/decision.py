@@ -36,6 +36,7 @@ class Decision:
     earliest_date_for_full_payment: str  # YYYY-MM-DD or ""
     spending_changes_needed: str  # "none" or "stop:event_id|reduce_to:event_id:amount"
     decision_explanation: str
+    ai_analysis: dict = None  # AI-powered financial analysis (optional)
 
 
 class DecisionEngine:

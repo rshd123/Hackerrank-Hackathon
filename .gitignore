@@ -1,42 +1,64 @@
-# Secrets
+# --- Secrets ---
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+*.key
+credentials/
+*.pem
+secrets/
 
-# Python
+# --- Python ---
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+*.py[cod]
 *.egg-info/
+*.egg
+.Python
 dist/
 build/
-*.egg
+pip-wheel-metadata/
 
-# Virtual environment
+# --- Virtual environments ---
 venv/
 .venv/
 env/
+ENV/
+.conda/
 
-# IDE
+# --- Test / type / linter caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# --- Generated outputs & archives ---
+output.csv
+*.zip
+!dataset/**/*.zip
+
+# --- Logs (no conversation/transcript logs) ---
+log.txt
+*.log
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- IDE / editor ---
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
-
-# Chat transcript (upload manually, don't commit)
-log.txt
-
-# API keys
-*.key
-credentials/
-
-output.csv
-code.zip
-dataset.zip
+desktop.ini
 BUGS.md
+
+
+TODO.md
+log.txt

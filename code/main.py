@@ -11,15 +11,13 @@ For each request in requests.csv:
 7. Write output row
 
 Usage:
-    python code/main.py              # Full pipeline with LLM
-    python code/main.py --no-llm     # Deterministic only (fast, ~1.5s)
+    python -m code.main    # Full pipeline — LLM always enabled
 """
 
 from __future__ import annotations
 
 import csv
 import os
-import sys
 import time
 import traceback
 from datetime import date, datetime
@@ -44,8 +42,14 @@ def process_request(
     messages: list[Message],
     images: list,
 ) -> Decision:
-    """Process a single request through the full pipeline.
-    Falls back to deterministic-only if LLM fails."""
+    """Process a single request through the full AI-powered pipeline.
+    
+    1. Parse messages/images via LLM (extraction)
+    2. Analyze financial situation via LLM (intelligence)
+    3. Generate candidates and simulate (deterministic math)
+    4. Decide and rank (deterministic tie-breaker)
+    5. Generate explanation via LLM (personalization)
+    """
 
     deltas = []
 
@@ -90,9 +94,61 @@ def process_request(
     generator = PlanGenerator(state, request, data_loader)
     candidates = generator.generate_all_candidates()
 
-    # Decide
+    # Rank candidates (deterministic tie-breaker)
     engine = DecisionEngine(forecaster)
-    decision = engine.decide(candidates)
+    ranked = engine.rank_candidates(candidates)
+
+    # AI-powered personalized candidate selection (if available)
+    ai_selected = False
+    if llm_parser and ranked:
+        try:
+            ai_choice = llm_parser.select_best_candidate(
+                state.profile, ranked, forecaster,
+            )
+            if ai_choice:
+                selected_idx = ai_choice["selected_index"]
+                # Override the deterministic #1 with LLM's personalized choice
+                if selected_idx != 0 and selected_idx < len(ranked):
+                    # Move LLM's choice to front
+                    chosen = ranked.pop(selected_idx)
+                    ranked.insert(0, chosen)
+                    ai_selected = True
+        except Exception:
+            pass  # AI failure is non-fatal, deterministic #1 stays
+
+    # Decide using the (possibly AI-reordered) ranked list
+    decision = engine.decide(ranked)
+
+    # AI-powered explanation + risk assessment (if available)
+    if llm_parser:
+        try:
+            # Calculate financial metrics for AI
+            income_events = [e for e in state.confirmed_income if e.amount and e.amount > 0]
+            monthly_income = sum(e.amount for e in income_events) / max(len(income_events), 1) if income_events else 0
+            
+            expense_events = [e for e in state.recurring if e.amount and e.amount > 0]
+            monthly_expenses = sum(e.amount for e in expense_events) / max(len(expense_events), 1) if expense_events else 0
+            
+            pending_total = sum(e.amount for e in state.pending_debits if e.amount)
+            
+            ai_result = llm_parser.generate_explanation(
+                state.profile, request,
+                decision.affordability_status,
+                decision.recommended_payment_method,
+                monthly_income, monthly_expenses, pending_total,
+            )
+            if ai_result:
+                if ai_result.get("explanation"):
+                    decision.decision_explanation = ai_result["explanation"]
+                decision.ai_analysis = ai_result
+        except Exception:
+            pass  # AI failure is non-fatal
+
+    # Mark if AI personalized the decision
+    if ai_selected and decision.ai_analysis is None:
+        decision.ai_analysis = {"ai_selected": True}
+    elif ai_selected:
+        decision.ai_analysis["ai_selected"] = True
 
     return decision
 
@@ -138,11 +194,10 @@ def main():
         all_messages[rid] = data_loader.load_messages(rid)
         all_images[rid] = data_loader.load_images(rid)
 
-    # Initialize LLM parser if API key available and not disabled
+    # LLM is always used for prediction; requires an API key
     llm_parser = None
-    use_llm = "--no-llm" not in sys.argv
     api_key = os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if api_key and use_llm:
+    if api_key:
         try:
             from code.llm_parser import LLMParser
             llm_parser = LLMParser(api_key=api_key)
@@ -150,7 +205,7 @@ def main():
         except Exception as e:
             print(f"WARNING: LLM parser init failed: {e} -- running deterministic only")
     else:
-        print("LLM parser disabled (--no-llm or no API key)")
+        print("ERROR: No API key found (set GROQ_API_KEY or OPENAI_API_KEY) -- LLM is required")
 
     # Process each request
     print(f"Processing {len(requests)} requests...")

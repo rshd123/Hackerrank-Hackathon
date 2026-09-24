@@ -1,58 +1,160 @@
-# HackerRank Orchestrate
+# {{PROJECT_NAME}}
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon (September 2026).
+> **Note:** `{{PROJECT_NAME}}` is a placeholder — replace it with the final project name.
 
-## Buy or Wait?
+An AI-powered **financial affordability agent**. Given a user's request — *"Can I afford this laptop?"* — it decides whether they should **pay in full, pay partially, use installments, wait, or decline**, while guaranteeing the user never drops below their minimum balance over a 90-day forecast.
 
-Build an AI-powered financial agent that decides whether a user can safely afford a requested expense.
-
-A user may ask: **"Can I afford this laptop?"**
-
-Answering well takes more than the current balance. The agent must account for recurring expenses, pending payments, essential spending, confirmed income, available payment options, and relevant details buried in messages and images.
-
-For every request, the agent decides whether the user should pay in full, pay partially, use installments, wait, or not proceed. The recommendation must be personalized: two users with the same balance can deserve different answers based on their commitments, priorities, payment preferences, and willingness to adjust flexible expenses.
-
-A recommendation is safe only if the user can complete the full payment plan, cover essential expenses, and stay above their preferred minimum balance throughout the forecast period.
-
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, allowed values, conflict-resolution rules, and submission format.
+It combines a **multimodal LLM** (perception, language, judgment) with a **deterministic Python engine** (all money math), so recommendations are both personal and mathematically safe.
 
 ---
 
-## Quick Start
+## Table of Contents
 
-Clone the repository and move into the project directory:
+- [How It Works](#how-it-works)
+- [Architecture](#architecture)
+- [Pipeline](#pipeline)
+- [Decision Rules](#decision-rules)
+- [Output Contract](#output-contract)
+- [Dataset](#dataset)
+- [Repository Layout](#repository-layout)
+- [Setup](#setup)
+- [Usage](#usage)
+- [Validation & Accuracy](#validation--accuracy)
+- [Modules](#modules)
+- [Tech Stack](#tech-stack)
+- [Documentation](#documentation)
 
-```bash
-git clone https://github.com/interviewstreet/hackerrank-orchestrate-september26.git
-cd hackerrank-orchestrate-september26
+---
+
+## How It Works
+
+For every request, the system answers seven questions:
+
+| Output field | Question it answers |
+|---|---|
+| `amount_safe_to_pay` | How much can be paid **today** without breaking the 90-day safety check? |
+| `affordability_status` | Is it `affordable_now`, `affordable_with_plan`, `affordable_later`, or `not_affordable`? |
+| `recommended_payment_method` | `full_payment`, `partial_payment`, `installments`, `wait`, or `not_recommended`? |
+| `payment_plan` | Exact dated payment schedule, if any |
+| `earliest_date_for_full_payment` | First date one safe full payment is possible |
+| `spending_changes_needed` | Which flexible expenses to stop/reduce (max 3), if any |
+| `decision_explanation` | Grounded, personalized explanation in plain language |
+
+**Key design split — the LLM never does arithmetic:**
+
+| Layer | Responsibility |
+|---|---|
+| **LLM (Groq `qwen/qwen3.8-27b`)** | OCR amounts from receipt images, parse NL messages into ledger amendments, pick among *already-safe* plans based on the user's soft priorities, write explanations |
+| **Python engine** | 90-day balance simulation, headroom math, currency conversion, safety constraints, 6-step tie-breaker ranking |
+
+Why: money math must be exact and reproducible; LLMs hallucinate numbers. Language and images must be interpreted flexibly; regex can't. Each layer does what it's good at.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph INPUT["Inputs"]
+        I1["requests.csv"]
+        I2["financial_profiles.csv"]
+        I3["financial_events.csv"]
+        I4["exchange_rates.csv"]
+        I5["request_payment_options.csv"]
+        I6["messages.csv"]
+        I7["media/images/*.png"]
+    end
+
+    subgraph AI["AI Perception Layer (llm_parser.py)"]
+        VLM["Vision OCR → amounts from blank events"]
+        NLU["Message NLU → cancel / amend_amount / amend_date deltas"]
+        SEL["Safe-plan selection by user priorities"]
+        EXP["Personalized decision_explanation"]
+    end
+
+    subgraph CORE["Deterministic Core (Python)"]
+        S1["State reconstruction + conflict resolution"]
+        S2["90-day daily ledger forecast"]
+        S3["Combinatorial plan generation"]
+        S4["Safety check + 6-step tie-breaker"]
+    end
+
+    I1 & I2 & I3 & I4 & I5 --> S1
+    I6 --> NLU --> S1
+    I7 --> VLM --> S1
+    S1 --> S2 --> S3 --> S4
+    S4 --> SEL --> EXP --> OUT["output.csv (250 rows)"]
 ```
 
-Build your solution in `code/main.py`, or use another language and document its entry point clearly.
+---
 
-Your solution must:
+## Pipeline
 
-- Read the input files from `dataset/`
-- Generate one prediction for every request
-- Write the final predictions to `output.csv` in the repository root
+1. **Load** — all 9 CSVs joined by `user_id` / `request_id` / `related_event_id`; every amount converted to the user's `home_currency` using dated FX rates.
+2. **AI extraction** — messages → structured ledger deltas (cancellations, amount/date amendments); images → amounts for events with blank `amount` (never treated as zero).
+3. **State reconstruction** — apply deltas, resolve conflicts (explicit cancellation > newer record > settled event > safer interpretation), detect recurring income/expense patterns.
+4. **90-day forecast** — day-by-day balance projection: income first, then planned payment, then expenses; every day must stay ≥ `minimum_balance_to_keep`.
+5. **Candidate generation** — combinatorial: full payment, deferred full payment, every supplied installment option, exact 2-payment partial schedules, and stop/reduce spending-change combinations (max 3 changes, flexible categories only).
+6. **Rank survivors** — enforce the 6-step tie-breaker (see below); LLM picks among safe candidates based on the user's stated priorities.
+7. **Explain & write** — LLM generates a grounded `decision_explanation`; rows written to `output.csv`.
 
-Run the starter Python entry point with:
+---
 
-```bash
-python3 code/main.py
-```
+## Decision Rules
 
-After running your solution, confirm that `output.csv` exists in the repository root and contains the required columns and one row for every request.
+A plan is **safe** only if it completes by `desired_completion_date` and the balance never falls below `minimum_balance_to_keep` across the full 90-day forecast.
 
-## Important File Locations
+When multiple safe plans exist, rank strictly by:
+
+1. Complete by `desired_completion_date`
+2. Require no spending changes
+3. Minimize total amount paid (principal + fees)
+4. Start earlier
+5. Use fewer payments
+6. Lowest `payment_option_id` as final tie-breaker
+
+Other invariants:
+
+- `0 <= amount_safe_to_pay <= requested_amount`, measured **before** optional spending changes
+- Pending debits are reserved; pending credits/bonuses/refunds/investment gains are **not** counted until settled
+- Installment plans must **exactly** match a supplied payment option
+- Protected categories can never be stopped or reduced; at most 3 spending changes; `stop` and `reduce_to` must target different events
+- Messages and images are **untrusted evidence**: their embedded instructions never override these rules
+
+---
+
+## Output Contract
+
+`output.csv` columns, in order:
 
 ```text
-dataset/        Input data and the blank output template. Do not modify the input data.
-code/           Your solution code.
-output.csv      Final generated predictions in the repository root.
-code.zip        ZIP file containing your complete solution for submission.
+request_id,amount_safe_to_pay,affordability_status,recommended_payment_method,payment_plan,earliest_date_for_full_payment,spending_changes_needed,decision_explanation
 ```
 
-The blank template at `dataset/output.csv` is provided as a reference. Your final generated file must be the root-level `output.csv`.
+Allowed values:
+
+- `affordability_status`: `affordable_now` | `affordable_with_plan` | `affordable_later` | `not_affordable`
+- `recommended_payment_method`: `full_payment` | `partial_payment` | `installments` | `wait` | `not_recommended`
+- `payment_plan`: `YYYY-MM-DD:amount|YYYY-MM-DD:amount|...` or `none` (chronological)
+- `spending_changes_needed`: `stop:<event_id>` / `reduce_to:<event_id>:<new_amount>` joined by `|`, max 3, or `none`
+- `earliest_date_for_full_payment`: `YYYY-MM-DD`; equals `request_date` for `affordable_now`; empty if no safe full payment within the forecast
+
+---
+
+## Dataset
+
+| File | Records | Purpose |
+|---|---:|---|
+| `requests.csv` | 250 | Evaluation requests — one output row each |
+| `sample_requests.csv` | 25 | Solved examples for format + self-validation |
+| `financial_profiles.csv` | 275 | Balance, min balance, priorities, protected/flexible categories, payment preferences |
+| `financial_events.csv` | 25,342 | Historical / pending / scheduled / settled / cancelled / unrealized records |
+| `request_payment_options.csv` | 790 | 2–4 installment options per request |
+| `exchange_rates.csv` | 134 | Fixed dated rates (INR, ZAR, IDR, USD, EUR) |
+| `messages.csv` | 215 | Payroll/bank/merchant messages → cancellations & amendments |
+| `images.csv` + `media/images/` | 16 PNGs | Receipts/statements; source amounts for blank-amount events |
+
+All dates are `YYYY-MM-DD`. Amounts use the user's `home_currency`. No live market/banking APIs.
 
 ---
 
@@ -60,134 +162,140 @@ The blank template at `dataset/output.csv` is provided as a reference. Your fina
 
 ```text
 .
-├── AGENTS.md                         # Rules for AI coding tools + transcript logging
-├── problem_statement.md              # Full challenge statement
-├── README.md                         # You are here
-├── code/                             # Your solution code
-├── output.csv                        # Final generated predictions
-└── dataset/
-    ├── requests.csv                  # 250 requests to evaluate — predict these
-    ├── output.csv                    # Blank submission template
-    ├── sample_requests.csv           # 25 solved examples
-    ├── financial_profiles.csv        # Balances, minimum balance, priorities, preferences
-    ├── financial_events.csv          # Historical, pending, and confirmed transactions
-    ├── request_payment_options.csv   # Payment options available per request
-    ├── exchange_rates.csv            # Fixed, dated conversion rates
-    ├── messages.csv                  # Messages tied to users, requests, or events
-    ├── images.csv                    # Payroll letters, statements, bills, receipts
-    └── media/
-        └── images/
+├── README.md                  # This file
+├── AGENTS.md                  # Rules for AI coding agents working in this repo
+├── requirements.txt           # Python dependencies
+├── .env.example               # Environment variable template (copy to .env)
+├── output.csv                 # Generated predictions (one row per request)
+├── code/
+│   ├── main.py                # Entry point — full pipeline
+│   ├── data_loader.py         # CSV ingestion, dataclasses, FX conversion
+│   ├── financial_state.py     # State reconstruction, conflict resolution, patterns
+│   ├── forecaster.py          # 90-day simulator, headroom, plan safety checks
+│   ├── plan_generator.py      # Combinatorial candidate generation
+│   ├── decision.py            # Ranking, tie-breaker, status assignment
+│   ├── llm_parser.py          # Groq LLM/VLM: OCR, NLU, selection, explanations
+│   ├── validate_samples.py    # Benchmark against the 25 solved samples
+│   └── evaluation/
+│       └── usage_report.md    # Token usage & cost report
+├── dataset/                   # All input data (do not modify)
+├── docs/                      # Architecture, strategy, decisions, evaluation
+└── problem_statement.md       # Original full specification
 ```
 
-Only `dataset/requests.csv` requires predictions. Everything else is context. Join user records with `user_id`, request records with `request_id`, supporting evidence with `related_event_id`, and exchange rates with the rate date and currency pair.
-
-Amounts are in the user's `home_currency` — the dataset uses INR, ZAR, IDR, USD, and EUR, and every conversion rate you need is in `exchange_rates.csv`. All dates are `YYYY-MM-DD`. Live exchange rates, market data, and banking access are not required.
-
 ---
 
-## What You Need to Build
+## Setup
 
-For every row in `dataset/requests.csv`, produce one row in `output.csv` with:
+**Requirements:** Python 3.11+ (tested on 3.11), a Groq API key (free tier works).
 
-| Column | Meaning |
-|---|---|
-| `request_id` | The request being answered |
-| `amount_safe_to_pay` | Largest amount safe to pay on `request_date` before optional spending changes, after protecting essentials and the minimum balance |
-| `affordability_status` | `affordable_now`, `affordable_with_plan`, `affordable_later`, or `not_affordable` |
-| `recommended_payment_method` | `full_payment`, `partial_payment`, `installments`, `wait`, or `not_recommended` |
-| `payment_plan` | Chronological `<YYYY-MM-DD>:<amount>` entries joined by `\|`, or `none` |
-| `earliest_date_for_full_payment` | Earliest date the full amount is forecast safe as one payment; empty if never within the forecast |
-| `spending_changes_needed` | Up to three `stop:<event_id>` / `reduce_to:<event_id>:<amount>` changes joined by `\|`, or `none` |
-| `decision_explanation` | Short explanation and the financial facts behind it |
+```bash
+# 1. Clone and enter the project
+git clone <repo-url>
+cd <project-dir>
 
-`0 <= amount_safe_to_pay <= requested_amount` must always hold. Installment plans must exactly match a supplied payment option, and only recurring expenses marked flexible may be changed.
+# 2. Create and activate a virtual environment (conda example)
+conda create -n <env-name> python=3.11 -y
+conda activate <env-name>
 
-`affordable_with_plan` means the full request is completed through a partial-payment schedule, installments, or permitted spending changes. Recommend `partial_payment` only when the request allows it, the user accepts it, `0 < amount_safe_to_pay < requested_amount`, and `earliest_date_for_full_payment` is on or before `desired_completion_date`. Use exactly two payments: pay `amount_safe_to_pay` on `request_date`, then pay the remaining amount on `earliest_date_for_full_payment`. The two payments must add up to `requested_amount`. Unlike installments, partial payment does not need to match a supplied payment option.
+# 3. Install dependencies
+pip install -r requirements.txt
 
----
+# 4. Configure secrets — never commit .env
+copy .env.example .env        # Windows
+# cp .env.example .env        # macOS / Linux
+```
 
-## Suggested Workflow
-
-1. Inspect `dataset/sample_requests.csv` — 25 requests with completed output columns — to understand the expected format and decision style.
-2. Reconstruct each user's financial state from `financial_profiles.csv` and `financial_events.csv`: separate recurring expenses from one-time events, reserve pending transactions, count confirmed salary only on its settlement date, and de-duplicate repeated representations of the same event.
-3. When an event has a blank `amount`, find its `event_id` as `related_event_id` in `images.csv` and extract the amount from the linked image. Never treat a blank amount as zero. Pull in any other relevant messages, images, and payment options for the request.
-4. Forecast forward and generate a plan that keeps the balance above the minimum at every step.
-5. Verify deterministically — bounds, plan feasibility, schedule match, flexible-only spending changes — before writing `output.csv`.
-6. Score yourself on the solved samples, then run the full dataset.
-
-You may use any language or runtime. Python, JavaScript, and TypeScript are all reasonable choices.
-
----
-
-## Requirements
-
-Your solution must:
-
-- be runnable from the terminal
-- read the provided files from `dataset/`
-- produce a valid `output.csv` with the exact required columns in the exact required order
-- include one prediction for every `request_id` in `dataset/requests.csv`
-- not use organizer-only files or hardcoded labels
-- keep behavior deterministic where possible
-
-If you use API keys or secrets, read them from environment variables. Never hardcode secrets in the repo.
-
----
-
-## Evaluation
-
-Your `output.csv` will be compared against hidden ground-truth values.
-
-The scoring will consider:
-
-- accuracy of `amount_safe_to_pay`
-- correctness of `affordability_status`
-- correctness of `recommended_payment_method` and `payment_plan`
-- accuracy of `earliest_date_for_full_payment`
-- validity of `spending_changes_needed`
-- usefulness and consistency of `decision_explanation`
-
-### Token Usage And Cost Analysis
-
-Your `code.zip` must include one token-usage file:
+Edit `.env` and set your key:
 
 ```text
-evaluation/usage_report.md
+GROQ_API_KEY=gsk_your_key_here
 ```
 
-The report must cover model providers and names, model calls, input and output tokens, total and average tokens per request, estimated total and per-request cost. The reported values must correspond to the final full-dataset run that produced your `output.csv`.
+Get a free key at [console.groq.com](https://console.groq.com). `OPENAI_API_KEY` is also read as a fallback.
 
 ---
 
-## Chat Transcript Logging
+## Usage
 
-This repo includes an [`AGENTS.md`](./AGENTS.md) file for AI coding tools. It asks compatible tools to append conversation summaries to a `log.txt` in the repository root — the same directory as `AGENTS.md`:
+LLM is **always enabled** during prediction (image OCR, message parsing, plan selection, explanations):
 
-| Platform | Path |
-|---|---|
-| macOS / Linux | `<repo root>/log.txt` |
-| Windows | `<repo root>\log.txt` |
+```bash
+python -m code.main
+```
 
-The path resolves relative to `AGENTS.md`, so it stays correct across clones, renames, and checkouts. `log.txt` is gitignored — upload it as your chat transcript at submission time. Do not paste secrets into the chat.
+This reads `dataset/`, processes all 250 requests, and writes `output.csv` at the repo root. Progress, status/method distributions, and token usage are printed at the end.
 
-In case, the harness you are using is not in the repo root, you can explicitly ask the agent to look for the AGENTS.md in this folder & then continue.
+Run the 25-sample benchmark:
+
+```bash
+python -m code.validate_samples
+```
+
+The run fails gracefully with a clear error if no API key is set. No secrets are ever hard-coded or included in outputs.
 
 ---
 
-## Submission
+## Validation & Accuracy
 
-Submit the following files as instructed by HackerRank:
-
-| File | Description |
+| Metric | Result |
 |---|---|
-| `code.zip` | Full runnable solution, prompts/configuration, README, and the required `evaluation/` folder |
-| `output.csv` | Predictions for every row in `dataset/requests.csv` |
-| `chat_transcript` | The `log.txt` described above, showing how you developed or used the system |
+| Sample benchmark (`sample_requests.csv`) | **84.0% (21 / 25 exact matches)** |
+| Evaluated requests | 250 |
+| Throughput (engine) | ~180+ requests/sec for the deterministic core |
 
-Before submitting, confirm:
+Failure analysis, root causes, and fix history are tracked in [`BUGS.md`](./BUGS.md). Token/cost metrics for the full run live in [`code/evaluation/usage_report.md`](./code/evaluation/usage_report.md).
 
-- `output.csv` has one row per row in `dataset/requests.csv` (250 rows plus the header).
-- `output.csv` has the exact required columns in the exact required order.
-- Every `amount_safe_to_pay` satisfies `0 <= amount_safe_to_pay <= requested_amount`.
-- Every installment plan matches a supplied payment option, and every spending change targets a flexible recurring expense.
-- Your runnable code, setup instructions, and `evaluation/` folder are included in `code.zip`.
+Sample ground-truth style (from `sample_requests.csv`):
+
+```text
+request_01 → affordable_now / full_payment / 2024-03-03:25256
+request_02 → affordable_with_plan / installments / 3 × IDR 15,952,906.67
+request_03 → affordable_later / wait / pay full on 2019-11-15
+```
+
+---
+
+## Modules
+
+| Module | Responsibility |
+|---|---|
+| `code/main.py` | CLI entry point — orchestrates the pipeline, error fallback, writes `output.csv` |
+| `code/data_loader.py` | Typed dataclasses; loads all CSVs; dated FX conversion |
+| `code/financial_state.py` | Event classification, conflict resolution, recurrence detection, applies LLM deltas |
+| `code/forecaster.py` | 90-day daily ledger; intra-day ordering (income → payment → expenses); headroom & safety checks |
+| `code/plan_generator.py` | Generates every valid candidate: full, deferred, installments, partial, spending changes |
+| `code/decision.py` | 6-step tie-breaker ranking, affordability status assignment, rule enforcement |
+| `code/llm_parser.py` | Groq client: vision OCR, message NLU, candidate selection, explanation generation (temperature 0) |
+| `code/validate_samples.py` | Automated benchmark vs. the 25 solved samples |
+
+---
+
+## Tech Stack
+
+| Concern | Choice |
+|---|---|
+| Language | Python 3.11+ |
+| Data | pandas |
+| LLM / VLM | Groq — `qwen/qwen3.8-27b` (vision + text, free tier) |
+| HTTP client | `groq` SDK |
+| Config | `python-dotenv` |
+| Validation | pydantic |
+| Testing | pytest |
+
+**Design principles:** deterministic where it must be, AI where it must be; one provider, one key; temperature 0; LLM output is validated (JSON parse, action whitelist, index bounds) before it touches the engine.
+
+---
+
+## Documentation
+
+| Topic | File |
+|---|---|
+| Full original specification | [`problem_statement.md`](./problem_statement.md) |
+| Architecture & design | [`docs/SOLUTION.md`](./docs/SOLUTION.md), [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) |
+| Implementation specs | [`docs/IMPLEMENTATION.md`](./docs/IMPLEMENTATION.md) |
+| Key decisions (interview-defensible) | [`docs/DECISIONS.md`](./docs/DECISIONS.md) |
+| Evaluation strategy | [`docs/EVALUATION.md`](./docs/EVALUATION.md) |
+| Build checklist | [`TODO.md`](./TODO.md) |
+| Bug tracker & accuracy log | [`BUGS.md`](./BUGS.md) |
+| Agent working rules | [`AGENTS.md`](./AGENTS.md) |
