@@ -1,6 +1,6 @@
-> **This file shows the system architecture for "Buy or Wait?"** — a deterministic financial affordability agent with an LLM data-extraction frontend. Use this to understand the full pipeline from raw CSVs to output.csv.
+> **This file shows the system architecture for Smart Buy** — a deterministic financial affordability agent with an LLM data-extraction frontend. Use this to understand the full pipeline from raw CSVs to output.csv.
 
-# Architecture — Buy or Wait?
+# Architecture — Smart Buy
 
 ## Core Principle
 
@@ -15,66 +15,37 @@ The LLM never makes a financial decision. It extracts data into JSON. Code appli
 
 ## System Diagram
 
-```
-┌─────────────────────────────────────────────────┐
-│              RAW CSVs (dataset/)                 │
-│  requests, profiles, events, rates, options,    │
-│  messages, images                               │
-└──────────────────────┬──────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│         PHASE 1: DATA LOADING & CURRENCY        │
-│  • Merge CSVs by user_id / request_id           │
-│  • Convert all amounts to home_currency         │
-│  • Build recurring expense profiles             │
-│  • Index payment options per request            │
-└──────────────────────┬──────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│         PHASE 2: MULTIMODAL EXTRACTION          │
-│  (Only file that calls the LLM — Groq API)      │
-│  • Image OCR: blank amounts → numerical values  │
-│  • Message parsing: text → JSON ledger deltas   │
-│  • Conflict resolution: settled > newer > safe  │
-└──────────────────────┬──────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│       PHASE 3: FINANCIAL STATE RECONSTRUCTION   │
-│  • Apply LLM deltas (cancels, amendments)       │
-│  • Separate: recurring, flexible, pending,      │
-│    confirmed income                             │
-│  • Build daily transaction ledger               │
-└──────────────────────┬──────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│         PHASE 4: 90-DAY DETERMINISTIC SIMULATOR │
-│  • Project daily balance for 90 days            │
-│  • Calculate headroom = amount_safe_to_pay      │
-│  • Find earliest safe date for full payment     │
-│  • Balance must never fall below min_balance    │
-└──────────────────────┬──────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│     PHASE 5: COMBINATORIAL SOLVER & RANKING     │
-│  • Generate ALL valid payment candidates        │
-│  • Simulate each through 90-day forecaster      │
-│  • Discard unsafe plans                         │
-│  • Rank survivors by 6-step tie-breaker         │
-└──────────────────────┬──────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│         PHASE 6: OUTPUT GENERATION              │
-│  • Map winning plan → output.csv row            │
-│  • LLM writes decision_explanation              │
-│  • Validate all fields against schema           │
-│  • Write output.csv                             │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph INPUT["Inputs"]
+        I1["requests.csv"]
+        I2["financial_profiles.csv"]
+        I3["financial_events.csv"]
+        I4["exchange_rates.csv"]
+        I5["request_payment_options.csv"]
+        I6["messages.csv"]
+        I7["media/images/*.png"]
+    end
+
+    subgraph AI["AI Perception Layer (llm_parser.py)"]
+        VLM["Vision OCR → amounts from blank events"]
+        NLU["Message NLU → cancel / amend_amount / amend_date deltas"]
+        SEL["Safe-plan selection by user priorities"]
+        EXP["Personalized decision_explanation"]
+    end
+
+    subgraph CORE["Deterministic Core (Python)"]
+        S1["State reconstruction + conflict resolution"]
+        S2["90-day daily ledger forecast"]
+        S3["Combinatorial plan generation"]
+        S4["Safety check + 6-step tie-breaker"]
+    end
+
+    I1 & I2 & I3 & I4 & I5 --> S1
+    I6 --> NLU --> S1
+    I7 --> VLM --> S1
+    S1 --> S2 --> S3 --> S4
+    S4 --> SEL --> EXP --> OUT["output.csv (250 rows)"]
 ```
 
 ---

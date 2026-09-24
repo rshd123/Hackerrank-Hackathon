@@ -10,7 +10,7 @@ It combines a **multimodal LLM** (perception, language, judgment) with a **deter
 
 <div align="center">
   <a href="#how-it-works">How It Works</a> |
-  <a href="#architecture">Architecture</a> |
+  <a href="./docs/ARCHITECTURE.md">Architecture</a> |
   <a href="#pipeline">Pipeline</a> |
   <a href="#decision-rules">Decision Rules</a><br>
   <a href="#dataset">Dataset</a> |
@@ -43,43 +43,6 @@ For every request, the system answers seven questions:
 | **Python engine** | 90-day balance simulation, headroom math, currency conversion, safety constraints, 6-step tie-breaker ranking |
 
 Why: money math must be exact and reproducible; LLMs hallucinate numbers. Language and images must be interpreted flexibly; regex can't. Each layer does what it's good at.
-
----
-
-## Architecture
-
-```mermaid
-flowchart TD
-    subgraph INPUT["Inputs"]
-        I1["requests.csv"]
-        I2["financial_profiles.csv"]
-        I3["financial_events.csv"]
-        I4["exchange_rates.csv"]
-        I5["request_payment_options.csv"]
-        I6["messages.csv"]
-        I7["media/images/*.png"]
-    end
-
-    subgraph AI["AI Perception Layer (llm_parser.py)"]
-        VLM["Vision OCR → amounts from blank events"]
-        NLU["Message NLU → cancel / amend_amount / amend_date deltas"]
-        SEL["Safe-plan selection by user priorities"]
-        EXP["Personalized decision_explanation"]
-    end
-
-    subgraph CORE["Deterministic Core (Python)"]
-        S1["State reconstruction + conflict resolution"]
-        S2["90-day daily ledger forecast"]
-        S3["Combinatorial plan generation"]
-        S4["Safety check + 6-step tie-breaker"]
-    end
-
-    I1 & I2 & I3 & I4 & I5 --> S1
-    I6 --> NLU --> S1
-    I7 --> VLM --> S1
-    S1 --> S2 --> S3 --> S4
-    S4 --> SEL --> EXP --> OUT["output.csv (250 rows)"]
-```
 
 ---
 
@@ -291,6 +254,4 @@ request_03 → affordable_later / wait / pay full on 2019-11-15
 | Implementation specs | [`docs/IMPLEMENTATION.md`](./docs/IMPLEMENTATION.md) |
 | Key decisions (interview-defensible) | [`docs/DECISIONS.md`](./docs/DECISIONS.md) |
 | Evaluation strategy | [`docs/EVALUATION.md`](./docs/EVALUATION.md) |
-| Build checklist | [`TODO.md`](./TODO.md) |
-| Bug tracker & accuracy log | [`BUGS.md`](./BUGS.md) |
 | Agent working rules | [`AGENTS.md`](./AGENTS.md) |
